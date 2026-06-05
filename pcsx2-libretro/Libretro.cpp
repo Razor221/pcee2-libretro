@@ -48,6 +48,7 @@
 #include "pcsx2/MTGS.h"
 #include "pcsx2/SIO/Pad/Pad.h"
 #include "pcsx2/VMManager.h"
+#include "pcsx2/ps2/BiosTools.h"
 
 #include "svnrev.h"
 
@@ -181,8 +182,9 @@ void LibretroHost::SettingsOverride()
 	s_settings_interface.SetBoolValue("EmuCore/GS", "FrameLimitEnable", false);
 	s_settings_interface.SetIntValue("EmuCore/GS", "VsyncEnable", false);
 
-	// v1: software renderer + memory readback
-	s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", static_cast<int>(GSRendererType::SW));
+	// v1: Vulkan renderer; it's the only Linux backend that supports a
+	// Surfaceless (swapchain-less) device, and we read frames back anyway
+	s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", static_cast<int>(GSRendererType::VK));
 
 	// all input comes through the libretro API, not host devices
 	s_settings_interface.SetBoolValue("InputSources", "SDL", false);
@@ -194,6 +196,25 @@ void LibretroHost::SettingsOverride()
 	s_settings_interface.SetStringValue("SPU2/Output", "OutputModule", "nullout");
 
 	s_settings_interface.SetBoolValue("Logging", "EnableSystemConsole", true);
+
+	// pick the first valid BIOS image from <system>/pcsx2/bios if none is configured
+	if (s_settings_interface.GetStringValue("Filenames", "BIOS").empty())
+	{
+		FileSystem::FindResultsArray files;
+		FileSystem::FindFiles(EmuFolders::Bios.c_str(), "*", FILESYSTEM_FIND_FILES, &files);
+		for (const FILESYSTEM_FIND_DATA& fd : files)
+		{
+			u32 version, region;
+			std::string description, zone;
+			if (IsBIOS(fd.FileName.c_str(), version, description, region, zone))
+			{
+				const std::string filename(Path::GetFileName(fd.FileName));
+				Console.WriteLnFmt("Auto-selected BIOS: {} ({})", filename, description);
+				s_settings_interface.SetStringValue("Filenames", "BIOS", filename.c_str());
+				break;
+			}
+		}
+	}
 }
 
 void LibretroHost::CPUThreadMain()
@@ -735,12 +756,26 @@ void Host::PumpMessagesOnCPUThread()
 	// read back the presented frame for the frontend
 	u32 width = 0, height = 0;
 	std::vector<u32> pixels;
-	if (MTGS::SaveMemorySnapshot(DEFAULT_WIDTH, DEFAULT_HEIGHT, true, false, &width, &height, &pixels))
+	static u32 s_frame_counter = 0;
+	const bool snapshot_ok = MTGS::SaveMemorySnapshot(DEFAULT_WIDTH, DEFAULT_HEIGHT, true, false, &width, &height, &pixels);
+	if (snapshot_ok)
 	{
 		std::unique_lock lock(s_frame_mutex);
 		s_frame_pixels = std::move(pixels);
 		s_frame_width = width;
 		s_frame_height = height;
+	}
+
+	if ((s_frame_counter++ % 120) == 0)
+	{
+		u32 nonzero = 0;
+		{
+			std::unique_lock lock(s_frame_mutex);
+			for (const u32 px : s_frame_pixels)
+				nonzero += ((px & 0xFFFFFF) != 0);
+		}
+		INFO_LOG("libretro frame {}: snapshot={} {}x{} nonzero_px={}", s_frame_counter - 1, snapshot_ok, width,
+			height, nonzero);
 	}
 
 	// pacing: signal frame done, then wait for the next run token
