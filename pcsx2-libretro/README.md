@@ -37,7 +37,8 @@ may come later.
 
 1. Put a PS2 BIOS dump into `<retroarch system dir>/pcsx2/bios/`.
 2. Copy the `resources` directory from a PCSX2 installation (or from `bin/resources` of this repo) to `<retroarch system dir>/pcsx2/resources/`.
-3. Load a disc image (`.iso`, `.chd`, `.cso`, `.gz`, `.bin`, `.mdf`, `.nrg`, `.elf`) with the core.
+3. For built-in game patches (including the widescreen / no-interlacing options), download [`patches.zip`](https://github.com/PCSX2/pcsx2_patches/releases/latest/download/patches.zip) into `<retroarch system dir>/pcsx2/resources/patches.zip`.
+4. Load a disc image (`.iso`, `.chd`, `.cso`, `.gz`, `.bin`, `.mdf`, `.nrg`, `.elf`) with the core.
 
 Memory cards, savestates metadata, cache, etc. live under
 `<retroarch system dir>/pcsx2/`.
