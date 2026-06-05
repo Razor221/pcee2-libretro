@@ -147,8 +147,20 @@ bool dyn_shaderc::Open()
 #endif
 	if (!s_library.Open(libname.c_str(), &error))
 	{
-		ERROR_LOG("Failed to load shaderc: {}", error.GetDescription());
-		return false;
+#ifndef _WIN32
+		// Distro packages (e.g. Ubuntu's libshaderc) ship the library as
+		// libshaderc.so.1 instead of libshaderc_shared.so.1.
+		const std::string distro_libname = DynamicLibrary::GetVersionedFilename("shaderc", 1);
+		if (s_library.Open(distro_libname.c_str(), &error))
+		{
+			INFO_LOG("Loaded distro shaderc library: {}", distro_libname);
+		}
+		else
+#endif
+		{
+			ERROR_LOG("Failed to load shaderc: {}", error.GetDescription());
+			return false;
+		}
 	}
 
 #define LOAD_FUNC(F) \
