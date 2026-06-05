@@ -676,7 +676,7 @@ unsigned retro_api_version(void)
 void retro_get_system_info(struct retro_system_info* info)
 {
 	std::memset(info, 0, sizeof(*info));
-	info->library_name = "PCSX2";
+	info->library_name = "PCEE2";
 	info->library_version = GIT_REV;
 	info->valid_extensions = "iso|chd|cso|zso|gz|bin|mdf|nrg|elf|irx";
 	info->need_fullpath = true;

@@ -1,7 +1,7 @@
 add_library(pcsx2-libretro SHARED)
 
 set_target_properties(pcsx2-libretro PROPERTIES
-	OUTPUT_NAME "pcsx2_libretro"
+	OUTPUT_NAME "pcee2_libretro"
 	PREFIX ""
 )
 

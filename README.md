@@ -1,4 +1,4 @@
-# PCSX2 libretro core
+# PCEE2 — PCSX2 libretro core
 
 A [libretro](https://www.libretro.com/) core frontend for the current PCSX2
 codebase, letting RetroArch (and other libretro frontends) run PS2 games with
@@ -63,7 +63,7 @@ cmake -B build-libretro -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH=$PWD/deps \
   -DSHADERC_LIBRARY=/usr/lib/x86_64-linux-gnu/libshaderc.so.1
 ninja -C build-libretro pcsx2-libretro
-# -> build-libretro/bin/pcsx2_libretro.so
+# -> build-libretro/bin/pcee2_libretro.so
 ```
 
 ## Core options
