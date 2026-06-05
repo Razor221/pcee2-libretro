@@ -1,3 +1,9 @@
+> [!NOTE]
+> **This is the [pcsx2-libretro](pcsx2-libretro/README.md) fork** — a libretro core port of current PCSX2
+> for RetroArch, maintained at [WizzardSK/pcsx2-libretro](https://github.com/WizzardSK/pcsx2-libretro).
+> See [pcsx2-libretro/README.md](pcsx2-libretro/README.md) for build and setup instructions.
+> Everything below is the unmodified upstream PCSX2 readme.
+
 # PCSX2
 
 ![Windows Build Status](https://img.shields.io/github/actions/workflow/status/PCSX2/pcsx2/windows_build_matrix.yml?label=%F0%9F%96%A5%EF%B8%8F%20Windows%20Builds)

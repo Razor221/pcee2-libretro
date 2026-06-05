@@ -1,0 +1,93 @@
+# PCSX2 libretro core
+
+A [libretro](https://www.libretro.com/) core frontend for the current PCSX2
+codebase, letting RetroArch (and other libretro frontends) run PS2 games with
+an up-to-date emulation core.
+
+Unlike [LRPS2](https://github.com/libretro/ps2) — a hard fork of an older
+PCSX2 snapshot — this port keeps the libretro layer *additive*: the emulation
+core is tracked from [upstream PCSX2](https://github.com/PCSX2/pcsx2) with a
+minimal set of hooks, so rebasing onto new upstream releases stays cheap.
+
+This project is not affiliated with or endorsed by the PCSX2 team.
+
+## Status
+
+| Area | Status |
+|---|---|
+| Boot + video (Vulkan, surfaceless) | ✅ working |
+| Software renderer (presented via Vulkan) | ✅ working |
+| Audio (48 kHz / 44.1 kHz PSX mode) | ✅ working |
+| Pad input (DualShock 2, 2 ports, analogs) | ✅ working |
+| Savestates (`retro_serialize`) | ✅ working, deterministic |
+| Memory cards | ✅ working (`<system>/pcsx2/memcards`) |
+| Core options (renderer, resolution, BIOS, fast boot) | ✅ working |
+| PAL (50 Hz) / NTSC av_info | ✅ working |
+| Fast-forward | ✅ working |
+| OpenGL / D3D / Metal renderers | ❌ not available (no surfaceless support) |
+| RetroAchievements | ❌ not wired up |
+| Multitap, USB devices | ❌ not wired up |
+| Windows / macOS builds | ❌ untested |
+
+Output is a per-frame GPU readback (double-buffered on the GS thread, one
+frame of latency). A zero-copy path via libretro Vulkan context negotiation
+may come later.
+
+## Setup
+
+1. Put a PS2 BIOS dump into `<retroarch system dir>/pcsx2/bios/`.
+2. Copy the `resources` directory from a PCSX2 installation (or from `bin/resources` of this repo) to `<retroarch system dir>/pcsx2/resources/`.
+3. Load a disc image (`.iso`, `.chd`, `.cso`, `.gz`, `.bin`, `.mdf`, `.nrg`, `.elf`) with the core.
+
+Memory cards, savestates metadata, cache, etc. live under
+`<retroarch system dir>/pcsx2/`.
+
+## Building (Linux)
+
+```sh
+# distro packages (Ubuntu/KDE neon)
+sudo apt install -y cmake ninja-build clang liblz4-dev libwebp-dev libsdl3-dev \
+  libshaderc-dev libcurl4-openssl-dev libpcap-dev libfontconfig-dev libudev-dev \
+  libx11-dev libxrandr-dev extra-cmake-modules libwayland-dev libegl-dev libdbus-1-dev
+
+# small deps not packaged by distros: plutovg, plutosvg, rapidyaml, libbacktrace
+# build them into ./deps (static, PIC) — see deps-src/ recipes or upstream's
+# .github/workflows/scripts/linux/build-dependencies-qt.sh for versions
+
+cmake -B build-libretro -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+  -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON \
+  -DCMAKE_PREFIX_PATH=$PWD/deps \
+  -DSHADERC_LIBRARY=/usr/lib/x86_64-linux-gnu/libshaderc.so.1
+ninja -C build-libretro pcsx2-libretro
+# -> build-libretro/bin/pcsx2_libretro.so
+```
+
+## Core options
+
+| Option | Values | Notes |
+|---|---|---|
+| Renderer | Vulkan / Software | applies on the fly |
+| Internal Resolution | 1x–4x | applies on the fly, scales output too |
+| BIOS | auto / discovered images | restart required |
+| Fast Boot | enabled / disabled | restart required |
+
+## Architecture notes
+
+- The frontend (`pcsx2-libretro/Libretro.cpp`) is modeled on `pcsx2-gsrunner`:
+  a dedicated CPU thread runs the `VMManager::Execute()` loop, and
+  `Host::PumpMessagesOnCPUThread()` paces it 1:1 against `retro_run()`.
+- Frames arrive through `GSSetFramebufferReadback()` — a double-buffered
+  readback on the GS thread added for this port (`GSRenderer.cpp`).
+- Audio is pulled from a custom `AudioStream` registered through
+  `SPU2::CustomOutputStreamFactory`.
+- Savestates use `SaveState_ZipToBuffer`/`SaveState_UnzipFromBuffer`
+  (in-memory variants of the existing zip paths).
+- Core modifications beyond these hooks are intentionally minimal; see
+  `git log --oneline upstream/master..libretro -- pcsx2/ common/` for the
+  full delta.
+
+## License
+
+GPL-3.0+, same as PCSX2. All emulation code is the work of the
+[PCSX2 team and contributors](https://github.com/PCSX2/pcsx2/graphs/contributors).
