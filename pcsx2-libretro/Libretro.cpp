@@ -98,8 +98,17 @@ namespace LibretroHost
 
 	static constexpr u32 DEFAULT_WIDTH = 640;
 	static constexpr u32 DEFAULT_HEIGHT = 480;
-	static constexpr u32 MAX_WIDTH = 1920;
-	static constexpr u32 MAX_HEIGHT = 1080;
+	static constexpr u32 MAX_UPSCALE = 4;
+	static constexpr u32 MAX_WIDTH = DEFAULT_WIDTH * MAX_UPSCALE;
+	static constexpr u32 MAX_HEIGHT = DEFAULT_HEIGHT * MAX_UPSCALE;
+
+	// current output (readback) resolution; follows the upscale option
+	static std::atomic<u32> s_out_width{DEFAULT_WIDTH};
+	static std::atomic<u32> s_out_height{DEFAULT_HEIGHT};
+
+	// core option state
+	static std::vector<std::string> s_bios_names; // backing storage for option values
+	static u32 s_opt_upscale = 1;
 	static constexpr u32 SAMPLE_RATE = 48000;
 	static constexpr u32 MAX_AUDIO_FRAMES_PER_RUN = 2048;
 
@@ -144,6 +153,8 @@ namespace LibretroHost
 	static void SettingsOverride();
 	static void CPUThreadMain();
 	static void DrainCPUWork();
+	static void RegisterCoreOptions();
+	static void ReadCoreOptions(bool startup);
 
 	static void LogCallback(const char* fmt_str, ...)
 	{
@@ -225,9 +236,9 @@ void LibretroHost::SettingsOverride()
 	s_settings_interface.SetBoolValue("EmuCore/GS", "FrameLimitEnable", false);
 	s_settings_interface.SetIntValue("EmuCore/GS", "VsyncEnable", false);
 
-	// v1: Vulkan renderer; it's the only Linux backend that supports a
-	// Surfaceless (swapchain-less) device, and we read frames back anyway
-	s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", static_cast<int>(GSRendererType::VK));
+	// Renderer comes from the core options (Vulkan or SW-on-Vulkan); Vulkan is
+	// the only Linux backend that supports a Surfaceless (swapchain-less)
+	// device, and we read frames back anyway.
 
 	// All input comes through the libretro API, not host devices. The default
 	// keyboard bindings are left in place — we never feed host key events, so
@@ -264,6 +275,116 @@ void LibretroHost::SettingsOverride()
 				break;
 			}
 		}
+	}
+}
+
+void LibretroHost::RegisterCoreOptions()
+{
+	// scan for BIOS images so the option can list them
+	s_bios_names.clear();
+	s_bios_names.push_back("auto");
+	{
+		const char* system_dir = nullptr;
+		if (s_environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir) && system_dir)
+		{
+			FileSystem::FindResultsArray files;
+			FileSystem::FindFiles(Path::Combine(Path::Combine(system_dir, "pcsx2"), "bios").c_str(), "*",
+				FILESYSTEM_FIND_FILES, &files);
+			for (const FILESYSTEM_FIND_DATA& fd : files)
+			{
+				u32 version, region;
+				std::string description, zone;
+				if (IsBIOS(fd.FileName.c_str(), version, description, region, zone))
+					s_bios_names.push_back(std::string(Path::GetFileName(fd.FileName)));
+			}
+		}
+	}
+
+	retro_core_option_v2_definition definitions[] = {
+		{"pcsx2_renderer", "Renderer", nullptr,
+			"Vulkan hardware renderer or the software renderer (also presented through Vulkan). Applies on the fly.",
+			nullptr, nullptr,
+			{{"vulkan", "Vulkan (Hardware)"}, {"software", "Software"}, {nullptr, nullptr}}, "vulkan"},
+		{"pcsx2_upscale_multiplier", "Internal Resolution", nullptr,
+			"Internal rendering resolution multiplier for the hardware renderer. Also scales the output framebuffer. Applies on the fly.",
+			nullptr, nullptr,
+			{{"1", "1x Native (640x480)"}, {"2", "2x Native (1280x960)"}, {"3", "3x Native (1920x1440)"},
+				{"4", "4x Native (2560x1920)"}, {nullptr, nullptr}},
+			"1"},
+		{"pcsx2_bios", "BIOS", nullptr, "BIOS image to use, from <system>/pcsx2/bios. Requires restart.", nullptr,
+			nullptr, {{nullptr, nullptr}}, "auto"},
+		{"pcsx2_fast_boot", "Fast Boot", nullptr, "Skip the BIOS boot animation. Requires restart.", nullptr, nullptr,
+			{{"enabled", nullptr}, {"disabled", nullptr}, {nullptr, nullptr}}, "enabled"},
+		{nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, {{nullptr, nullptr}}, nullptr},
+	};
+
+	// fill in the discovered BIOS list (bounded by the option value array size)
+	const size_t max_bios = std::min(s_bios_names.size(), std::size(definitions[2].values) - 1);
+	for (size_t i = 0; i < max_bios; i++)
+		definitions[2].values[i] = {s_bios_names[i].c_str(), nullptr};
+	definitions[2].values[max_bios] = {nullptr, nullptr};
+
+	unsigned version = 0;
+	if (s_environ_cb(RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION, &version) && version >= 2)
+	{
+		retro_core_options_v2 options = {nullptr, definitions};
+		s_environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options);
+		return;
+	}
+
+	// legacy fallback: "Description; value1|value2" strings
+	static std::vector<std::string> legacy_storage;
+	legacy_storage.clear();
+	std::vector<retro_variable> legacy;
+	for (const retro_core_option_v2_definition& def : definitions)
+	{
+		if (!def.key)
+			break;
+
+		std::string str = fmt::format("{}; ", def.desc);
+		// default first, as required by the legacy API
+		str += def.default_value;
+		for (const retro_core_option_value& v : def.values)
+		{
+			if (!v.value)
+				break;
+			if (std::strcmp(v.value, def.default_value) != 0)
+				str += fmt::format("|{}", v.value);
+		}
+		legacy_storage.push_back(std::move(str));
+		legacy.push_back({def.key, legacy_storage.back().c_str()});
+	}
+	legacy.push_back({nullptr, nullptr});
+	s_environ_cb(RETRO_ENVIRONMENT_SET_VARIABLES, legacy.data());
+}
+
+void LibretroHost::ReadCoreOptions(bool startup)
+{
+	const auto get_option = [](const char* key, const char* fallback) -> const char* {
+		retro_variable var = {key, nullptr};
+		if (s_environ_cb && s_environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+			return var.value;
+		return fallback;
+	};
+
+	const char* renderer = get_option("pcsx2_renderer", "vulkan");
+	s_settings_interface.SetIntValue("EmuCore/GS", "Renderer",
+		static_cast<int>((std::strcmp(renderer, "software") == 0) ? GSRendererType::SW : GSRendererType::VK));
+
+	const u32 upscale = std::clamp<u32>(StringUtil::FromChars<u32>(get_option("pcsx2_upscale_multiplier", "1")).value_or(1), 1, MAX_UPSCALE);
+	s_settings_interface.SetFloatValue("EmuCore/GS", "upscale_multiplier", static_cast<float>(upscale));
+	s_opt_upscale = upscale;
+	s_out_width.store(DEFAULT_WIDTH * upscale, std::memory_order_release);
+	s_out_height.store(DEFAULT_HEIGHT * upscale, std::memory_order_release);
+
+	if (startup)
+	{
+		const char* bios = get_option("pcsx2_bios", "auto");
+		if (std::strcmp(bios, "auto") != 0)
+			s_settings_interface.SetStringValue("Filenames", "BIOS", bios);
+
+		s_settings_interface.SetBoolValue("EmuCore", "EnableFastBoot",
+			std::strcmp(get_option("pcsx2_fast_boot", "enabled"), "enabled") == 0);
 	}
 }
 
@@ -323,6 +444,8 @@ void retro_set_environment(retro_environment_t cb)
 	retro_log_callback log_cb{};
 	if (cb(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &log_cb))
 		s_log_cb = log_cb.log;
+
+	RegisterCoreOptions();
 }
 
 void retro_set_video_refresh(retro_video_refresh_t cb) { s_video_cb = cb; }
@@ -349,8 +472,8 @@ void retro_get_system_info(struct retro_system_info* info)
 void retro_get_system_av_info(struct retro_system_av_info* info)
 {
 	std::memset(info, 0, sizeof(*info));
-	info->geometry.base_width = DEFAULT_WIDTH;
-	info->geometry.base_height = DEFAULT_HEIGHT;
+	info->geometry.base_width = s_out_width.load(std::memory_order_acquire);
+	info->geometry.base_height = s_out_height.load(std::memory_order_acquire);
 	info->geometry.max_width = MAX_WIDTH;
 	info->geometry.max_height = MAX_HEIGHT;
 	info->geometry.aspect_ratio = 4.0f / 3.0f;
@@ -383,6 +506,7 @@ bool retro_load_game(const struct retro_game_info* game)
 	if (!InitializeConfig())
 		return false;
 
+	ReadCoreOptions(true);
 	SettingsOverride();
 
 	SPU2::CustomOutputStreamFactory = &CreateLibretroAudioStream;
@@ -528,6 +652,19 @@ static void OutputAudio()
 
 void retro_run(void)
 {
+	// apply core option changes on the fly
+	bool options_updated = false;
+	if (s_environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &options_updated) && options_updated &&
+		s_running.load(std::memory_order_acquire))
+	{
+		ReadCoreOptions(false);
+		Host::RunOnCPUThread([]() { VMManager::ApplySettings(); });
+
+		retro_system_av_info av_info;
+		retro_get_system_av_info(&av_info);
+		s_environ_cb(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av_info);
+	}
+
 	if (s_running.load(std::memory_order_acquire))
 		UpdateInput();
 
@@ -983,7 +1120,8 @@ void Host::PumpMessagesOnCPUThread()
 	u32 width = 0, height = 0;
 	std::vector<u32> pixels;
 	static u32 s_frame_counter = 0;
-	const bool snapshot_ok = MTGS::SaveMemorySnapshot(DEFAULT_WIDTH, DEFAULT_HEIGHT, true, false, &width, &height, &pixels);
+	const bool snapshot_ok = MTGS::SaveMemorySnapshot(s_out_width.load(std::memory_order_acquire),
+		s_out_height.load(std::memory_order_acquire), true, false, &width, &height, &pixels);
 	if (snapshot_ok)
 	{
 		// snapshot is RGBA (R in the low byte); libretro XRGB8888 wants B low
