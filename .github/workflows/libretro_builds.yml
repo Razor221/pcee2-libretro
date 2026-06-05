@@ -25,7 +25,9 @@ jobs:
             libudev-dev libx11-dev libxrandr-dev libxext-dev extra-cmake-modules \
             libwayland-dev libegl-dev libdbus-1-dev libfreetype-dev libjpeg-turbo8-dev \
             libpng-dev zlib1g-dev libzstd-dev libdrm-dev libxkbcommon-dev libpipewire-0.3-dev \
-            libpulse-dev libasound2-dev
+            libpulse-dev libasound2-dev \
+            libxcursor-dev libxi-dev libxinerama-dev libxfixes-dev libxrender-dev \
+            libxss-dev libxtst-dev libgl1-mesa-dev libdecor-0-dev libgbm-dev
 
       - name: Cache Dependencies
         id: cache-deps
