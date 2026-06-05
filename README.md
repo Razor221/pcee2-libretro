@@ -24,7 +24,8 @@ This project is not affiliated with or endorsed by the PCSX2 team.
 | Core options (renderer, resolution, BIOS, fast boot) | ✅ working |
 | PAL (50 Hz) / NTSC av_info | ✅ working |
 | Fast-forward | ✅ working |
-| OpenGL / D3D / Metal renderers | ❌ not available (no surfaceless support) |
+| OpenGL renderer | ✅ working (surfaceless EGL) |
+| D3D / Metal renderers | ❌ Windows/macOS untested |
 | RetroAchievements | ❌ not wired up |
 | Multitap, USB devices | ❌ not wired up |
 | Windows / macOS builds | ❌ untested |
@@ -71,7 +72,7 @@ ninja -C build-libretro pcsx2-libretro
 |---|---|---|
 | BIOS | auto / discovered images | restart required |
 | Fast Boot | enabled / disabled | restart required |
-| Renderer | Vulkan / Software | applies on the fly |
+| Renderer | Vulkan / OpenGL / Software | applies on the fly |
 | Internal Resolution | 1x–4x | applies on the fly, scales output too |
 | Blending Accuracy | Minimum–Maximum | default Basic |
 | Texture Filtering | Nearest / Bilinear (PS2/Forced/Forced-no-sprites) | default PS2 |
