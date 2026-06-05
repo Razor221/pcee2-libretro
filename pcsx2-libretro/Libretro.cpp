@@ -40,6 +40,9 @@
 #include "pcsx2/Achievements.h"
 #include "pcsx2/Config.h"
 #include "pcsx2/GS.h"
+#include "pcsx2/Host/AudioStream.h"
+#include "pcsx2/SIO/Pad/PadDualshock2.h"
+#include "pcsx2/SPU2/spu2.h"
 #include "pcsx2/Host.h"
 #include "pcsx2/ImGui/FullscreenUI.h"
 #include "pcsx2/ImGui/ImGuiFullscreen.h"
@@ -96,6 +99,44 @@ namespace LibretroHost
 	static constexpr u32 MAX_WIDTH = 1920;
 	static constexpr u32 MAX_HEIGHT = 1080;
 	static constexpr u32 SAMPLE_RATE = 48000;
+	static constexpr u32 MAX_AUDIO_FRAMES_PER_RUN = 2048;
+
+	// SPU2 output stream that the frontend pulls samples from in retro_run().
+	// Reads happen while the CPU thread is parked in PumpMessagesOnCPUThread(),
+	// and the ring buffer is SPSC-atomic anyway, so no extra locking is needed.
+	class LibretroAudioStream final : public AudioStream
+	{
+	public:
+		LibretroAudioStream(u32 sample_rate, const AudioStreamParameters& parameters)
+			: AudioStream(sample_rate, parameters)
+		{
+		}
+
+		void Initialize()
+		{
+			BaseInitialize(&StereoSampleReaderImpl, false);
+		}
+
+		u32 PullFrames(SampleType* dest, u32 max_frames)
+		{
+			const u32 frames = std::min(GetBufferedFramesRelaxed(), max_frames);
+			if (frames > 0)
+				ReadFrames(dest, frames);
+			return frames;
+		}
+	};
+
+	// observer only; the stream is owned by SPU2 (s_output_stream)
+	static LibretroAudioStream* s_audio_stream = nullptr;
+	static std::atomic<u64> s_audio_frames_output{0};
+
+	static std::unique_ptr<AudioStream> CreateLibretroAudioStream(u32 sample_rate, const AudioStreamParameters& parameters)
+	{
+		std::unique_ptr<LibretroAudioStream> stream = std::make_unique<LibretroAudioStream>(sample_rate, parameters);
+		stream->Initialize();
+		s_audio_stream = stream.get();
+		return stream;
+	}
 
 	static bool InitializeConfig();
 	static void SettingsOverride();
@@ -334,6 +375,8 @@ bool retro_load_game(const struct retro_game_info* game)
 
 	SettingsOverride();
 
+	SPU2::CustomOutputStreamFactory = &CreateLibretroAudioStream;
+
 	s_boot_params = VMBootParameters();
 	s_boot_params.filename = game->path;
 
@@ -371,6 +414,7 @@ void retro_unload_game(void)
 	}
 
 	s_cpu_thread.join();
+	s_audio_stream = nullptr;
 }
 
 void retro_reset(void)
@@ -379,10 +423,103 @@ void retro_reset(void)
 		Host::RunOnCPUThread([]() { VMManager::Reset(); });
 }
 
+// Translate libretro joypad/analog state into DualShock2 binds. Called at the
+// start of retro_run(), while the CPU thread is parked, so Pad state writes
+// don't race the SIO reads.
+static void UpdateInput()
+{
+	if (!s_input_poll_cb || !s_input_state_cb)
+		return;
+
+	// don't touch Pad state until the VM is fully up (first frame produced);
+	// during VMManager::Initialize() the CPU thread is still constructing it
+	if (s_frame_width == 0)
+		return;
+
+	s_input_poll_cb();
+
+	static constexpr std::pair<unsigned, u32> button_map[] = {
+		{RETRO_DEVICE_ID_JOYPAD_UP, PadDualshock2::Inputs::PAD_UP},
+		{RETRO_DEVICE_ID_JOYPAD_RIGHT, PadDualshock2::Inputs::PAD_RIGHT},
+		{RETRO_DEVICE_ID_JOYPAD_DOWN, PadDualshock2::Inputs::PAD_DOWN},
+		{RETRO_DEVICE_ID_JOYPAD_LEFT, PadDualshock2::Inputs::PAD_LEFT},
+		{RETRO_DEVICE_ID_JOYPAD_X, PadDualshock2::Inputs::PAD_TRIANGLE},
+		{RETRO_DEVICE_ID_JOYPAD_A, PadDualshock2::Inputs::PAD_CIRCLE},
+		{RETRO_DEVICE_ID_JOYPAD_B, PadDualshock2::Inputs::PAD_CROSS},
+		{RETRO_DEVICE_ID_JOYPAD_Y, PadDualshock2::Inputs::PAD_SQUARE},
+		{RETRO_DEVICE_ID_JOYPAD_SELECT, PadDualshock2::Inputs::PAD_SELECT},
+		{RETRO_DEVICE_ID_JOYPAD_START, PadDualshock2::Inputs::PAD_START},
+		{RETRO_DEVICE_ID_JOYPAD_L, PadDualshock2::Inputs::PAD_L1},
+		{RETRO_DEVICE_ID_JOYPAD_L2, PadDualshock2::Inputs::PAD_L2},
+		{RETRO_DEVICE_ID_JOYPAD_R, PadDualshock2::Inputs::PAD_R1},
+		{RETRO_DEVICE_ID_JOYPAD_R2, PadDualshock2::Inputs::PAD_R2},
+		{RETRO_DEVICE_ID_JOYPAD_L3, PadDualshock2::Inputs::PAD_L3},
+		{RETRO_DEVICE_ID_JOYPAD_R3, PadDualshock2::Inputs::PAD_R3},
+	};
+
+	for (u32 port = 0; port < 2; port++)
+	{
+		for (const auto& [retro_id, ds2_bind] : button_map)
+		{
+			const int16_t state = s_input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, retro_id);
+			Pad::SetControllerState(port, ds2_bind, state ? 1.0f : 0.0f);
+		}
+
+		// analog sticks: split each axis into the two directional binds
+		static constexpr auto axis_value = [](int16_t v, bool negative) {
+			const float f = static_cast<float>(v) / 32767.0f;
+			return negative ? std::max(-f, 0.0f) : std::max(f, 0.0f);
+		};
+
+		const int16_t lx = s_input_state_cb(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
+		const int16_t ly = s_input_state_cb(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
+		const int16_t rx = s_input_state_cb(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X);
+		const int16_t ry = s_input_state_cb(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y);
+
+		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_L_LEFT, axis_value(lx, true));
+		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_L_RIGHT, axis_value(lx, false));
+		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_L_UP, axis_value(ly, true));
+		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_L_DOWN, axis_value(ly, false));
+		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_R_LEFT, axis_value(rx, true));
+		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_R_RIGHT, axis_value(rx, false));
+		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_R_UP, axis_value(ry, true));
+		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_R_DOWN, axis_value(ry, false));
+	}
+}
+
+static void OutputAudio()
+{
+	if (!s_audio_batch_cb)
+		return;
+
+	static float float_buffer[MAX_AUDIO_FRAMES_PER_RUN * 2];
+	static int16_t s16_buffer[MAX_AUDIO_FRAMES_PER_RUN * 2];
+
+	u32 frames = 0;
+	if (s_audio_stream)
+		frames = s_audio_stream->PullFrames(float_buffer, MAX_AUDIO_FRAMES_PER_RUN);
+
+	if (frames == 0)
+	{
+		// keep the frontend's audio pipeline fed during boot
+		std::memset(s16_buffer, 0, (SAMPLE_RATE / 60) * 2 * sizeof(int16_t));
+		s_audio_batch_cb(s16_buffer, SAMPLE_RATE / 60);
+		return;
+	}
+
+	for (u32 i = 0; i < frames * 2; i++)
+	{
+		const float v = std::clamp(float_buffer[i], -1.0f, 1.0f);
+		s16_buffer[i] = static_cast<int16_t>(v * 32767.0f);
+	}
+	s_audio_batch_cb(s16_buffer, frames);
+	s_audio_frames_output.fetch_add(frames, std::memory_order_relaxed);
+}
+
 void retro_run(void)
 {
-	if (s_input_poll_cb)
-		s_input_poll_cb();
+	if (s_running.load(std::memory_order_acquire))
+		UpdateInput();
 
 	if (!s_running.load(std::memory_order_acquire))
 	{
@@ -413,12 +550,8 @@ void retro_run(void)
 			(s_frame_width ? s_frame_width : DEFAULT_WIDTH) * sizeof(u32));
 	}
 
-	// v1: silence
-	if (s_audio_batch_cb)
-	{
-		static int16_t silence[2 * (SAMPLE_RATE / 50)] = {};
-		s_audio_batch_cb(silence, SAMPLE_RATE / 60);
-	}
+	// CPU thread is parked again at this point; safe to drain the audio buffer
+	OutputAudio();
 }
 
 size_t retro_serialize_size(void)
@@ -774,8 +907,8 @@ void Host::PumpMessagesOnCPUThread()
 			for (const u32 px : s_frame_pixels)
 				nonzero += ((px & 0xFFFFFF) != 0);
 		}
-		INFO_LOG("libretro frame {}: snapshot={} {}x{} nonzero_px={}", s_frame_counter - 1, snapshot_ok, width,
-			height, nonzero);
+		INFO_LOG("libretro frame {}: snapshot={} {}x{} nonzero_px={} audio_frames={}", s_frame_counter - 1, snapshot_ok,
+			width, height, nonzero, s_audio_frames_output.load(std::memory_order_relaxed));
 	}
 
 	// pacing: signal frame done, then wait for the next run token
