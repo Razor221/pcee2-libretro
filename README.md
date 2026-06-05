@@ -83,6 +83,7 @@ ninja -C build-libretro pcsx2-libretro
 | Deinterlacing | Automatic + 8 manual modes | default GameDB-driven |
 | FXAA | enabled / disabled | |
 | CAS (sharpening) | Disabled / Sharpen Only + sharpness 10–100 | |
+| Aspect Ratio | Auto / 4:3 / 16:9 | Auto follows widescreen patches |
 | Widescreen Patches | enabled / disabled | built-in 16:9 patches |
 | No-Interlacing Patches | enabled / disabled | built-in progressive patches |
 | EE Cycle Rate | 50%–300% | speed hack, may break games |

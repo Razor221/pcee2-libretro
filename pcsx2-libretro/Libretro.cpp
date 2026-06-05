@@ -123,6 +123,10 @@ namespace LibretroHost
 	// set once the frontend has been given the EE memory map for this session
 	static bool s_memory_map_sent = false;
 
+	// display aspect ratio reported to the frontend (bit_cast'd float); follows
+	// the aspect option / widescreen patches
+	static std::atomic<u32> s_aspect_bits{0};
+
 	// SPU2 output stream that the frontend pulls samples from in retro_run().
 	// Reads happen while the CPU thread is parked in PumpMessagesOnCPUThread(),
 	// and the ring buffer is SPSC-atomic anyway, so no extra locking is needed.
@@ -429,6 +433,9 @@ void LibretroHost::RegisterCoreOptions()
 			{{"10", nullptr}, {"20", nullptr}, {"30", nullptr}, {"40", nullptr}, {"50", nullptr}, {"60", nullptr},
 				{"70", nullptr}, {"80", nullptr}, {"90", nullptr}, {"100", nullptr}, {nullptr, nullptr}},
 			"50"},
+		{"pcsx2_aspect_ratio", "Aspect Ratio", nullptr,
+			"Automatic reports 16:9 when widescreen patches are enabled, 4:3 otherwise.", nullptr, "graphics",
+			{{"auto", "Automatic"}, {"4:3", nullptr}, {"16:9", nullptr}, {nullptr, nullptr}}, "auto"},
 		// patches
 		{"pcsx2_widescreen_patches", "Widescreen Patches", nullptr,
 			"Enable built-in 16:9 widescreen patches where available. Best applied before starting a game.", nullptr,
@@ -580,10 +587,17 @@ void LibretroHost::ReadCoreOptions(bool startup)
 	s_settings_interface.SetIntValue("EmuCore/GS", "CASSharpness", get_int_option("pcsx2_cas_sharpness", "50"));
 
 	// patches
-	s_settings_interface.SetBoolValue("EmuCore", "EnableWideScreenPatches",
-		std::strcmp(get_option("pcsx2_widescreen_patches", "disabled"), "enabled") == 0);
+	const bool widescreen = std::strcmp(get_option("pcsx2_widescreen_patches", "disabled"), "enabled") == 0;
+	s_settings_interface.SetBoolValue("EmuCore", "EnableWideScreenPatches", widescreen);
 	s_settings_interface.SetBoolValue("EmuCore", "EnableNoInterlacingPatches",
 		std::strcmp(get_option("pcsx2_no_interlacing_patches", "disabled"), "enabled") == 0);
+
+	// reported display aspect
+	const char* aspect = get_option("pcsx2_aspect_ratio", "auto");
+	float aspect_value = 4.0f / 3.0f;
+	if (std::strcmp(aspect, "16:9") == 0 || (std::strcmp(aspect, "auto") == 0 && widescreen))
+		aspect_value = 16.0f / 9.0f;
+	s_aspect_bits.store(std::bit_cast<u32>(aspect_value), std::memory_order_release);
 
 	// performance
 	s_settings_interface.SetIntValue("EmuCore/Speedhacks", "EECycleRate", get_int_option("pcsx2_ee_cycle_rate", "0"));
@@ -693,7 +707,8 @@ void retro_get_system_av_info(struct retro_system_av_info* info)
 	info->geometry.base_height = s_out_height.load(std::memory_order_acquire);
 	info->geometry.max_width = MAX_WIDTH;
 	info->geometry.max_height = MAX_HEIGHT;
-	info->geometry.aspect_ratio = 4.0f / 3.0f;
+	const u32 aspect_bits = s_aspect_bits.load(std::memory_order_acquire);
+	info->geometry.aspect_ratio = aspect_bits ? std::bit_cast<float>(aspect_bits) : (4.0f / 3.0f);
 	info->timing.fps = static_cast<double>(fps);
 	info->timing.sample_rate = static_cast<double>(s_audio_sample_rate.load(std::memory_order_acquire));
 }
@@ -877,13 +892,16 @@ static void UpdateAVInfoIfChanged()
 	static u32 last_sample_rate = 0;
 	static u32 last_width = 0;
 	static u32 last_height = 0;
+	static u32 last_aspect_bits = 0;
 
 	const u32 fps_bits = s_vm_fps_bits.load(std::memory_order_acquire);
 	const u32 sample_rate = s_audio_sample_rate.load(std::memory_order_acquire);
 	const u32 width = s_out_width.load(std::memory_order_acquire);
 	const u32 height = s_out_height.load(std::memory_order_acquire);
+	const u32 aspect_bits = s_aspect_bits.load(std::memory_order_acquire);
 
-	if (fps_bits == last_fps_bits && sample_rate == last_sample_rate && width == last_width && height == last_height)
+	if (fps_bits == last_fps_bits && sample_rate == last_sample_rate && width == last_width &&
+		height == last_height && aspect_bits == last_aspect_bits)
 		return;
 
 	// don't announce anything until the VM has reported a real frame rate
@@ -894,6 +912,7 @@ static void UpdateAVInfoIfChanged()
 	last_sample_rate = sample_rate;
 	last_width = width;
 	last_height = height;
+	last_aspect_bits = aspect_bits;
 
 	retro_system_av_info av_info;
 	retro_get_system_av_info(&av_info);
