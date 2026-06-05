@@ -122,3 +122,8 @@ CMakeSettings.json
 /ci-artifacts/
 /out/
 /.cache/
+
+# local dependency prefix for libretro builds
+/deps/
+/deps-src/
+/build-libretro/
