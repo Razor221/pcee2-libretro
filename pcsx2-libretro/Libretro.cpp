@@ -50,6 +50,7 @@
 #include "pcsx2/Input/InputManager.h"
 #include "pcsx2/MTGS.h"
 #include "pcsx2/SIO/Pad/Pad.h"
+#include "pcsx2/SaveState.h"
 #include "pcsx2/VMManager.h"
 #include "pcsx2/ps2/BiosTools.h"
 
@@ -92,6 +93,7 @@ namespace LibretroHost
 	// deferred work queue for Host::RunOnCPUThread
 	static std::mutex s_cpu_work_mutex;
 	static std::deque<std::function<void()>> s_cpu_work;
+	static std::atomic_bool s_cpu_work_pending{false};
 	static std::thread::id s_cpu_thread_id;
 
 	static constexpr u32 DEFAULT_WIDTH = 640;
@@ -240,6 +242,11 @@ void LibretroHost::SettingsOverride()
 
 	s_settings_interface.SetBoolValue("Logging", "EnableSystemConsole", true);
 
+	// savestates go through retro_serialize as uncompressed zips; speed over
+	// size, the frontend can compress its state files itself
+	s_settings_interface.SetIntValue("EmuCore", "SavestateCompressionType",
+		static_cast<int>(SavestateCompressionMethod::Uncompressed));
+
 	// pick the first valid BIOS image from <system>/pcsx2/bios if none is configured
 	if (s_settings_interface.GetStringValue("Filenames", "BIOS").empty())
 	{
@@ -296,6 +303,7 @@ void LibretroHost::DrainCPUWork()
 	{
 		std::unique_lock lock(s_cpu_work_mutex);
 		work.swap(s_cpu_work);
+		s_cpu_work_pending.store(false, std::memory_order_release);
 	}
 	for (auto& fn : work)
 		fn();
@@ -556,19 +564,96 @@ void retro_run(void)
 	OutputAudio();
 }
 
+// Fixed upper bound for uncompressed PS2 state data (EE 32MB + IOP 2MB + GS +
+// SPU2 + VU + zip overhead). libretro requires a stable serialize size, while
+// the real state size varies per frame, so we pad up to this and store the
+// actual length in a small header.
+static constexpr size_t SERIALIZE_BUFFER_SIZE = 96 * 1024 * 1024;
+static constexpr u32 SERIALIZE_MAGIC = 0x50325253; // 'P2RS'
+
+struct SerializeHeader
+{
+	u32 magic;
+	u32 reserved;
+	u64 zip_size;
+};
+
 size_t retro_serialize_size(void)
 {
-	return 0;
+	return SERIALIZE_BUFFER_SIZE;
 }
 
 bool retro_serialize(void* data, size_t size)
 {
-	return false;
+	if (!s_running.load(std::memory_order_acquire) || size < sizeof(SerializeHeader))
+		return false;
+
+	bool result = false;
+	Host::RunOnCPUThread(
+		[data, size, &result]() {
+			if (VMManager::GetState() != VMState::Running && VMManager::GetState() != VMState::Paused)
+				return;
+
+			Error error;
+			std::unique_ptr<ArchiveEntryList> entries = SaveState_DownloadState(&error);
+			if (!entries)
+			{
+				ERROR_LOG("retro_serialize: DownloadState failed: {}", error.GetDescription());
+				return;
+			}
+
+			std::vector<u8> buffer;
+			if (!SaveState_ZipToBuffer(std::move(entries), &buffer, &error))
+			{
+				ERROR_LOG("retro_serialize: ZipToBuffer failed: {}", error.GetDescription());
+				return;
+			}
+
+			if (sizeof(SerializeHeader) + buffer.size() > size)
+			{
+				ERROR_LOG("retro_serialize: state too large ({} bytes)", buffer.size());
+				return;
+			}
+
+			SerializeHeader header = {SERIALIZE_MAGIC, 0, buffer.size()};
+			std::memcpy(data, &header, sizeof(header));
+			std::memcpy(static_cast<u8*>(data) + sizeof(header), buffer.data(), buffer.size());
+			result = true;
+		},
+		true);
+
+	return result;
 }
 
 bool retro_unserialize(const void* data, size_t size)
 {
-	return false;
+	if (!s_running.load(std::memory_order_acquire) || size < sizeof(SerializeHeader))
+		return false;
+
+	SerializeHeader header;
+	std::memcpy(&header, data, sizeof(header));
+	if (header.magic != SERIALIZE_MAGIC || sizeof(SerializeHeader) + header.zip_size > size)
+		return false;
+
+	bool result = false;
+	Host::RunOnCPUThread(
+		[data, &header, &result]() {
+			if (VMManager::GetState() != VMState::Running && VMManager::GetState() != VMState::Paused)
+				return;
+
+			Error error;
+			if (!SaveState_UnzipFromBuffer(
+					static_cast<const u8*>(data) + sizeof(SerializeHeader), header.zip_size, &error))
+			{
+				ERROR_LOG("retro_unserialize: {}", error.GetDescription());
+				return;
+			}
+
+			result = true;
+		},
+		true);
+
+	return result;
 }
 
 void retro_cheat_reset(void) {}
@@ -761,8 +846,12 @@ void Host::RunOnCPUThread(std::function<void()> function, bool block /* = false 
 
 	if (!block)
 	{
-		std::unique_lock lock(s_cpu_work_mutex);
-		s_cpu_work.push_back(std::move(function));
+		{
+			std::unique_lock lock(s_cpu_work_mutex);
+			s_cpu_work.push_back(std::move(function));
+			s_cpu_work_pending.store(true, std::memory_order_release);
+		}
+		s_frame_cv.notify_all(); // wake the CPU thread if it's parked
 		return;
 	}
 
@@ -778,7 +867,9 @@ void Host::RunOnCPUThread(std::function<void()> function, bool block /* = false 
 			done = true;
 			done_cv.notify_all();
 		});
+		s_cpu_work_pending.store(true, std::memory_order_release);
 	}
+	s_frame_cv.notify_all();
 	std::unique_lock dlock(done_mutex);
 	done_cv.wait(dlock, [&]() { return done; });
 }
@@ -917,11 +1008,28 @@ void Host::PumpMessagesOnCPUThread()
 			width, height, nonzero, s_audio_frames_output.load(std::memory_order_relaxed));
 	}
 
-	// pacing: signal frame done, then wait for the next run token
+	// pacing: signal frame done, then wait for the next run token, servicing
+	// queued CPU work (savestates, resets, ...) while parked
 	std::unique_lock lock(s_frame_mutex);
 	s_frame_ready = true;
 	s_frame_cv.notify_all();
-	s_frame_cv.wait(lock, []() { return s_run_token || !s_running.load(std::memory_order_acquire); });
+	for (;;)
+	{
+		s_frame_cv.wait(lock, []() {
+			return s_run_token || s_cpu_work_pending.load(std::memory_order_acquire) ||
+				   !s_running.load(std::memory_order_acquire);
+		});
+
+		if (s_cpu_work_pending.load(std::memory_order_acquire))
+		{
+			lock.unlock();
+			DrainCPUWork();
+			lock.lock();
+			continue;
+		}
+
+		break;
+	}
 	s_run_token = false;
 }
 
