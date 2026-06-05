@@ -26,7 +26,7 @@ This project is not affiliated with or endorsed by the PCSX2 team.
 | Fast-forward | ✅ working |
 | OpenGL renderer | ✅ working (surfaceless EGL) |
 | D3D / Metal renderers | ❌ Windows/macOS untested |
-| RetroAchievements | ❌ not wired up |
+| RetroAchievements | ✅ via RetroArch (EE RAM exposed; log in to RetroAchievements in RetroArch settings) |
 | Multitap, USB devices | ❌ not wired up |
 | Windows / macOS builds | ❌ untested |
 

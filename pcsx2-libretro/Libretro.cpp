@@ -51,6 +51,7 @@
 #include "pcsx2/ImGui/ImGuiManager.h"
 #include "pcsx2/Input/InputManager.h"
 #include "pcsx2/MTGS.h"
+#include "pcsx2/MemoryTypes.h"
 #include "pcsx2/SIO/Pad/Pad.h"
 #include "pcsx2/SaveState.h"
 #include "pcsx2/VMManager.h"
@@ -118,6 +119,9 @@ namespace LibretroHost
 	// 44.1kHz); updated from the CPU/audio-factory threads, consumed in retro_run
 	static std::atomic<u32> s_vm_fps_bits{0};
 	static std::atomic<u32> s_audio_sample_rate{SAMPLE_RATE};
+
+	// set once the frontend has been given the EE memory map for this session
+	static bool s_memory_map_sent = false;
 
 	// SPU2 output stream that the frontend pulls samples from in retro_run().
 	// Reads happen while the CPU thread is parked in PumpMessagesOnCPUThread(),
@@ -763,6 +767,7 @@ void retro_unload_game(void)
 	s_cpu_thread.join();
 	s_audio_stream = nullptr;
 	GSSetFramebufferReadback(nullptr, 0, 0);
+	s_memory_map_sent = false;
 }
 
 void retro_reset(void)
@@ -910,6 +915,17 @@ void retro_run(void)
 
 	UpdateAVInfoIfChanged();
 
+	// announce the memory map once the VM has its memory allocated, so the
+	// frontend's achievements/cheats can read EE RAM
+	if (!s_memory_map_sent && eeMem && s_running.load(std::memory_order_acquire))
+	{
+		static retro_memory_descriptor descs[2];
+		descs[0] = {RETRO_MEMDESC_SYSTEM_RAM, eeMem->Main, 0, 0x00000000u, 0, 0, Ps2MemSize::MainRam, "EE RAM"};
+		descs[1] = {RETRO_MEMDESC_SYSTEM_RAM, eeMem->Scratch, 0, 0x70000000u, 0, 0, sizeof(eeMem->Scratch), "Scratchpad"};
+		retro_memory_map mmap = {descs, 2};
+		s_memory_map_sent = s_environ_cb(RETRO_ENVIRONMENT_SET_MEMORY_MAPS, &mmap);
+	}
+
 	if (s_running.load(std::memory_order_acquire))
 		UpdateInput();
 
@@ -1049,13 +1065,20 @@ unsigned retro_get_region(void)
 
 void retro_set_controller_port_device(unsigned port, unsigned device) {}
 
+// EE main memory, exposed so the frontend's achievements, cheats and memory
+// inspection work. eeMem is allocated during CPU thread startup; until then
+// (or after shutdown) report no memory.
 void* retro_get_memory_data(unsigned id)
 {
+	if (id == RETRO_MEMORY_SYSTEM_RAM && eeMem && s_running.load(std::memory_order_acquire))
+		return eeMem->Main;
 	return nullptr;
 }
 
 size_t retro_get_memory_size(unsigned id)
 {
+	if (id == RETRO_MEMORY_SYSTEM_RAM)
+		return Ps2MemSize::MainRam;
 	return 0;
 }
 
