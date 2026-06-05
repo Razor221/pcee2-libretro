@@ -112,6 +112,10 @@ namespace LibretroHost
 	// core option state
 	static std::vector<std::string> s_bios_names; // backing storage for option values
 	static u32 s_opt_upscale = 1;
+
+	// libretro port -> PCSX2 pad index (see sioConvertPadToPortAndSlot: 0=1A,
+	// 1=2A, 2..4=1B..1D, 5..7=2B..2D), built from the multitap option
+	static std::vector<u32> s_pad_map = {0, 1};
 	static constexpr u32 SAMPLE_RATE = 48000;
 	static constexpr u32 MAX_AUDIO_FRAMES_PER_RUN = 2048;
 
@@ -436,6 +440,14 @@ void LibretroHost::RegisterCoreOptions()
 		{"pcsx2_aspect_ratio", "Aspect Ratio", nullptr,
 			"Automatic reports 16:9 when widescreen patches are enabled, 4:3 otherwise.", nullptr, "graphics",
 			{{"auto", "Automatic"}, {"4:3", nullptr}, {"16:9", nullptr}, {nullptr, nullptr}}, "auto"},
+		// system (continued)
+		{"pcsx2_multitap", "Multitap", nullptr,
+			"Enable the multitap adapter for up to 8 controllers. Player order follows the physical slots "
+			"(port 1: 1A-1D, then port 2: 2A-2D). Restart recommended.",
+			nullptr, "system",
+			{{"disabled", "Disabled (2 players)"}, {"port1", "Port 1 (5 players)"}, {"port2", "Port 2 (5 players)"},
+				{"both", "Both Ports (8 players)"}, {nullptr, nullptr}},
+			"disabled"},
 		// patches
 		{"pcsx2_widescreen_patches", "Widescreen Patches", nullptr,
 			"Enable built-in 16:9 widescreen patches where available. Best applied before starting a game.", nullptr,
@@ -602,6 +614,35 @@ void LibretroHost::ReadCoreOptions(bool startup)
 	// performance
 	s_settings_interface.SetIntValue("EmuCore/Speedhacks", "EECycleRate", get_int_option("pcsx2_ee_cycle_rate", "0"));
 	s_settings_interface.SetIntValue("EmuCore/Speedhacks", "EECycleSkip", get_int_option("pcsx2_ee_cycle_skip", "0"));
+
+	// multitap: enable adapters and build the libretro-port -> pad-index map
+	{
+		const char* multitap = get_option("pcsx2_multitap", "disabled");
+		const bool mt1 = (std::strcmp(multitap, "port1") == 0 || std::strcmp(multitap, "both") == 0);
+		const bool mt2 = (std::strcmp(multitap, "port2") == 0 || std::strcmp(multitap, "both") == 0);
+		s_settings_interface.SetBoolValue("Pad", "MultitapPort1", mt1);
+		s_settings_interface.SetBoolValue("Pad", "MultitapPort2", mt2);
+
+		s_pad_map.clear();
+		s_pad_map.push_back(0); // 1A
+		if (mt1)
+		{
+			s_pad_map.push_back(2); // 1B
+			s_pad_map.push_back(3); // 1C
+			s_pad_map.push_back(4); // 1D
+		}
+		s_pad_map.push_back(1); // 2A
+		if (mt2)
+		{
+			s_pad_map.push_back(5); // 2B
+			s_pad_map.push_back(6); // 2C
+			s_pad_map.push_back(7); // 2D
+		}
+
+		// all mapped pads are DualShock 2s
+		for (const u32 pad : s_pad_map)
+			s_settings_interface.SetStringValue(fmt::format("Pad{}", pad + 1).c_str(), "Type", "DualShock2");
+	}
 
 	if (startup)
 	{
@@ -825,12 +866,14 @@ static void UpdateInput()
 		{RETRO_DEVICE_ID_JOYPAD_R3, PadDualshock2::Inputs::PAD_R3},
 	};
 
-	for (u32 port = 0; port < 2; port++)
+	for (u32 port = 0; port < static_cast<u32>(s_pad_map.size()); port++)
 	{
+		const u32 pad = s_pad_map[port];
+
 		for (const auto& [retro_id, ds2_bind] : button_map)
 		{
 			const int16_t state = s_input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, retro_id);
-			Pad::SetControllerState(port, ds2_bind, state ? 1.0f : 0.0f);
+			Pad::SetControllerState(pad, ds2_bind, state ? 1.0f : 0.0f);
 		}
 
 		// analog sticks: split each axis into the two directional binds
@@ -844,14 +887,14 @@ static void UpdateInput()
 		const int16_t rx = s_input_state_cb(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X);
 		const int16_t ry = s_input_state_cb(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y);
 
-		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_L_LEFT, axis_value(lx, true));
-		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_L_RIGHT, axis_value(lx, false));
-		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_L_UP, axis_value(ly, true));
-		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_L_DOWN, axis_value(ly, false));
-		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_R_LEFT, axis_value(rx, true));
-		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_R_RIGHT, axis_value(rx, false));
-		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_R_UP, axis_value(ry, true));
-		Pad::SetControllerState(port, PadDualshock2::Inputs::PAD_R_DOWN, axis_value(ry, false));
+		Pad::SetControllerState(pad, PadDualshock2::Inputs::PAD_L_LEFT, axis_value(lx, true));
+		Pad::SetControllerState(pad, PadDualshock2::Inputs::PAD_L_RIGHT, axis_value(lx, false));
+		Pad::SetControllerState(pad, PadDualshock2::Inputs::PAD_L_UP, axis_value(ly, true));
+		Pad::SetControllerState(pad, PadDualshock2::Inputs::PAD_L_DOWN, axis_value(ly, false));
+		Pad::SetControllerState(pad, PadDualshock2::Inputs::PAD_R_LEFT, axis_value(rx, true));
+		Pad::SetControllerState(pad, PadDualshock2::Inputs::PAD_R_RIGHT, axis_value(rx, false));
+		Pad::SetControllerState(pad, PadDualshock2::Inputs::PAD_R_UP, axis_value(ry, true));
+		Pad::SetControllerState(pad, PadDualshock2::Inputs::PAD_R_DOWN, axis_value(ry, false));
 	}
 }
 

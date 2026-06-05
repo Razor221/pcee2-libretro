@@ -27,7 +27,8 @@ This project is not affiliated with or endorsed by the PCSX2 team.
 | OpenGL renderer | ✅ working (surfaceless EGL) |
 | D3D / Metal renderers | ❌ Windows/macOS untested |
 | RetroAchievements | ✅ via RetroArch (EE RAM exposed; log in to RetroAchievements in RetroArch settings) |
-| Multitap, USB devices | ❌ not wired up |
+| Multitap (up to 8 controllers) | ✅ core option |
+| USB devices (lightgun, wheels, mic) | ❌ not wired up |
 | Windows / macOS builds | ❌ untested |
 
 Output is a per-frame GPU readback (double-buffered on the GS thread, one
@@ -88,6 +89,7 @@ ninja -C build-libretro pcsx2-libretro
 | No-Interlacing Patches | enabled / disabled | built-in progressive patches |
 | EE Cycle Rate | 50%–300% | speed hack, may break games |
 | EE Cycle Skip | Disabled–Maximum | speed hack, may break games |
+| Multitap | Disabled / Port 1 / Port 2 / Both | up to 8 players, restart recommended |
 
 All graphics options map directly onto the corresponding standalone PCSX2
 settings; anything not exposed yet runs at the standalone default (including
