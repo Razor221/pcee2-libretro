@@ -141,6 +141,27 @@ namespace LibretroHost
 	static LibretroAudioStream* s_audio_stream = nullptr;
 	static std::atomic<u64> s_audio_frames_output{0};
 
+	// Runs on the GS thread once per vsync with the previous frame's pixels
+	// (see GSSetFramebufferReadback). Swizzles RGBA -> XRGB8888 into the
+	// buffer retro_run() presents.
+	static void FramebufferReadbackCallback(const u32* pixels, u32 pitch_px, u32 width, u32 height)
+	{
+		std::unique_lock lock(s_frame_mutex);
+		s_frame_pixels.resize(static_cast<size_t>(width) * height);
+		for (u32 y = 0; y < height; y++)
+		{
+			const u32* src = pixels + static_cast<size_t>(y) * pitch_px;
+			u32* dst = s_frame_pixels.data() + static_cast<size_t>(y) * width;
+			for (u32 x = 0; x < width; x++)
+			{
+				const u32 px = src[x];
+				dst[x] = (px & 0xFF00FF00u) | ((px & 0xFFu) << 16) | ((px >> 16) & 0xFFu);
+			}
+		}
+		s_frame_width = width;
+		s_frame_height = height;
+	}
+
 	static std::unique_ptr<AudioStream> CreateLibretroAudioStream(u32 sample_rate, const AudioStreamParameters& parameters)
 	{
 		std::unique_ptr<LibretroAudioStream> stream = std::make_unique<LibretroAudioStream>(sample_rate, parameters);
@@ -376,6 +397,7 @@ void LibretroHost::ReadCoreOptions(bool startup)
 	s_opt_upscale = upscale;
 	s_out_width.store(DEFAULT_WIDTH * upscale, std::memory_order_release);
 	s_out_height.store(DEFAULT_HEIGHT * upscale, std::memory_order_release);
+	GSSetFramebufferReadback(&FramebufferReadbackCallback, DEFAULT_WIDTH * upscale, DEFAULT_HEIGHT * upscale);
 
 	if (startup)
 	{
@@ -399,6 +421,8 @@ void LibretroHost::CPUThreadMain()
 		if (VMManager::Initialize(s_boot_params) == VMBootResult::StartupSuccess)
 		{
 			VMManager::SetState(VMState::Running);
+			// the frontend paces us through retro_run(); never wall-clock throttle
+			VMManager::SetLimiterMode(LimiterModeType::Unlimited);
 			while (VMManager::GetState() == VMState::Running && s_running.load(std::memory_order_acquire))
 				VMManager::Execute();
 			VMManager::Shutdown(false);
@@ -549,6 +573,7 @@ void retro_unload_game(void)
 
 	s_cpu_thread.join();
 	s_audio_stream = nullptr;
+	GSSetFramebufferReadback(nullptr, 0, 0);
 }
 
 void retro_reset(void)
@@ -1116,34 +1141,19 @@ void Host::PumpMessagesOnCPUThread()
 	if (!s_running.load(std::memory_order_acquire))
 		return;
 
-	// read back the presented frame for the frontend
-	u32 width = 0, height = 0;
-	std::vector<u32> pixels;
+	// frames arrive asynchronously via FramebufferReadbackCallback on the GS
+	// thread; nothing to read back here
 	static u32 s_frame_counter = 0;
-	const bool snapshot_ok = MTGS::SaveMemorySnapshot(s_out_width.load(std::memory_order_acquire),
-		s_out_height.load(std::memory_order_acquire), true, false, &width, &height, &pixels);
-	if (snapshot_ok)
-	{
-		// snapshot is RGBA (R in the low byte); libretro XRGB8888 wants B low
-		for (u32& px : pixels)
-			px = (px & 0xFF00FF00u) | ((px & 0xFFu) << 16) | ((px >> 16) & 0xFFu);
-
-		std::unique_lock lock(s_frame_mutex);
-		s_frame_pixels = std::move(pixels);
-		s_frame_width = width;
-		s_frame_height = height;
-	}
-
 	if ((s_frame_counter++ % 120) == 0)
 	{
-		u32 nonzero = 0;
+		u32 width, height;
 		{
 			std::unique_lock lock(s_frame_mutex);
-			for (const u32 px : s_frame_pixels)
-				nonzero += ((px & 0xFFFFFF) != 0);
+			width = s_frame_width;
+			height = s_frame_height;
 		}
-		INFO_LOG("libretro frame {}: snapshot={} {}x{} nonzero_px={} audio_frames={}", s_frame_counter - 1, snapshot_ok,
-			width, height, nonzero, s_audio_frames_output.load(std::memory_order_relaxed));
+		INFO_LOG("libretro frame {}: {}x{} audio_frames={}", s_frame_counter - 1, width, height,
+			s_audio_frames_output.load(std::memory_order_relaxed));
 	}
 
 	// pacing: signal frame done, then wait for the next run token, servicing
