@@ -39,6 +39,7 @@ may come later.
 2. Copy the `resources` directory from a PCSX2 installation (or from `bin/resources` of this repo) to `<retroarch system dir>/pcsx2/resources/`.
 3. For built-in game patches (including the widescreen / no-interlacing options), download [`patches.zip`](https://github.com/PCSX2/pcsx2_patches/releases/latest/download/patches.zip) into `<retroarch system dir>/pcsx2/resources/patches.zip`.
 4. Load a disc image (`.iso`, `.chd`, `.cso`, `.gz`, `.bin`, `.mdf`, `.nrg`, `.elf`) with the core.
+5. Optional: copy your standalone `PCSX2.ini` to `<retroarch system dir>/pcsx2/inis/PCSX2.ini` — the core adopts its emulation settings (EmuCore, speed hacks, CPU, GS, game fixes) as the baseline. Core options still override their respective settings.
 
 Memory cards, savestates metadata, cache, etc. live under
 `<retroarch system dir>/pcsx2/`.

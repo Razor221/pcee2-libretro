@@ -45,6 +45,7 @@
 #include "pcsx2/SIO/Pad/PadDualshock2.h"
 #include "pcsx2/SPU2/spu2.h"
 #include "pcsx2/Host.h"
+#include "pcsx2/INISettingsInterface.h"
 #include "pcsx2/ImGui/FullscreenUI.h"
 #include "pcsx2/ImGui/ImGuiFullscreen.h"
 #include "pcsx2/ImGui/ImGuiManager.h"
@@ -252,6 +253,38 @@ bool LibretroHost::InitializeConfig()
 	Host::Internal::SetBaseSettingsLayer(&si);
 
 	VMManager::SetDefaultSettings(si, true, true, true, true, true);
+
+	// If the user dropped a standalone PCSX2.ini into <system>/pcsx2/inis,
+	// adopt its emulation settings as the baseline. Core options and the
+	// libretro-specific overrides still apply on top, and host-side sections
+	// (folders, UI, input bindings, audio device, logging, ...) are ignored.
+	{
+		const std::string ini_path = Path::Combine(EmuFolders::Settings, "PCSX2.ini");
+		INISettingsInterface ini(ini_path);
+		if (FileSystem::FileExists(ini_path.c_str()) && ini.Load())
+		{
+			static constexpr const char* merge_sections[] = {
+				"EmuCore",
+				"EmuCore/Speedhacks",
+				"EmuCore/CPU",
+				"EmuCore/CPU/Recompiler",
+				"EmuCore/GS",
+				"EmuCore/Gamefixes",
+			};
+
+			u32 merged = 0;
+			for (const char* section : merge_sections)
+			{
+				for (const auto& [key, value] : ini.GetKeyValueList(section))
+				{
+					s_settings_interface.SetStringValue(section, key.c_str(), value.c_str());
+					merged++;
+				}
+			}
+			Console.WriteLnFmt("Adopted {} settings from standalone config '{}'.", merged, ini_path);
+		}
+	}
+
 	VMManager::Internal::LoadStartupSettings();
 
 	EmuFolders::EnsureFoldersExist();
