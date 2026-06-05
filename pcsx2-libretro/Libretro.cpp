@@ -377,9 +377,11 @@ void LibretroHost::RegisterCoreOptions()
 			"system", {{"enabled", nullptr}, {"disabled", nullptr}, {nullptr, nullptr}}, "enabled"},
 		// graphics
 		{"pcsx2_renderer", "Renderer", nullptr,
-			"Vulkan hardware renderer or the software renderer (also presented through Vulkan). Applies on the fly.",
+			"Hardware renderer API, or the software renderer. Applies on the fly.",
 			nullptr, "graphics",
-			{{"vulkan", "Vulkan (Hardware)"}, {"software", "Software"}, {nullptr, nullptr}}, "vulkan"},
+			{{"vulkan", "Vulkan (Hardware)"}, {"opengl", "OpenGL (Hardware)"}, {"software", "Software"},
+				{nullptr, nullptr}},
+			"vulkan"},
 		{"pcsx2_upscale_multiplier", "Internal Resolution", nullptr,
 			"Internal rendering resolution multiplier for the hardware renderer. Also scales the output framebuffer. Applies on the fly.",
 			nullptr, "graphics",
@@ -502,8 +504,12 @@ void LibretroHost::ReadCoreOptions(bool startup)
 	};
 
 	const char* renderer = get_option("pcsx2_renderer", "vulkan");
-	s_settings_interface.SetIntValue("EmuCore/GS", "Renderer",
-		static_cast<int>((std::strcmp(renderer, "software") == 0) ? GSRendererType::SW : GSRendererType::VK));
+	GSRendererType renderer_type = GSRendererType::VK;
+	if (std::strcmp(renderer, "software") == 0)
+		renderer_type = GSRendererType::SW;
+	else if (std::strcmp(renderer, "opengl") == 0)
+		renderer_type = GSRendererType::OGL;
+	s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", static_cast<int>(renderer_type));
 
 	const u32 upscale = std::clamp<u32>(StringUtil::FromChars<u32>(get_option("pcsx2_upscale_multiplier", "1")).value_or(1), 1, MAX_UPSCALE);
 	s_settings_interface.SetFloatValue("EmuCore/GS", "upscale_multiplier", static_cast<float>(upscale));
