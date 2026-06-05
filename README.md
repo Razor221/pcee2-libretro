@@ -28,7 +28,8 @@ This project is not affiliated with or endorsed by the PCSX2 team.
 | D3D / Metal renderers | ❌ Windows/macOS untested |
 | RetroAchievements | ✅ via RetroArch (EE RAM exposed; log in to RetroAchievements in RetroArch settings) |
 | Multitap (up to 8 controllers) | ✅ core option |
-| USB devices (lightgun, wheels, mic) | ❌ not wired up |
+| Lightgun (GunCon 2 via USB) | ✅ core option, aimed by frontend lightgun/mouse |
+| Other USB devices (wheels, mic, EyeToy) | ❌ not wired up |
 | Windows / macOS builds | ❌ untested |
 
 Output is a per-frame GPU readback (double-buffered on the GS thread, one
@@ -90,6 +91,7 @@ ninja -C build-libretro pcsx2-libretro
 | EE Cycle Rate | 50%–300% | speed hack, may break games |
 | EE Cycle Skip | Disabled–Maximum | speed hack, may break games |
 | Multitap | Disabled / Port 1 / Port 2 / Both | up to 8 players, restart recommended |
+| Lightgun (GunCon 2) | Disabled / USB 1 / USB 2 / Both | aim via frontend lightgun input, restart required |
 
 All graphics options map directly onto the corresponding standalone PCSX2
 settings; anything not exposed yet runs at the standalone default (including

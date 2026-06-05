@@ -54,6 +54,7 @@
 #include "pcsx2/MemoryTypes.h"
 #include "pcsx2/SIO/Pad/Pad.h"
 #include "pcsx2/SaveState.h"
+#include "pcsx2/USB/USB.h"
 #include "pcsx2/VMManager.h"
 #include "pcsx2/ps2/BiosTools.h"
 
@@ -116,6 +117,9 @@ namespace LibretroHost
 	// libretro port -> PCSX2 pad index (see sioConvertPadToPortAndSlot: 0=1A,
 	// 1=2A, 2..4=1B..1D, 5..7=2B..2D), built from the multitap option
 	static std::vector<u32> s_pad_map = {0, 1};
+
+	// GunCon2 lightguns on USB ports (bit 0 = USB1, bit 1 = USB2)
+	static u32 s_lightgun_mask = 0;
 	static constexpr u32 SAMPLE_RATE = 48000;
 	static constexpr u32 MAX_AUDIO_FRAMES_PER_RUN = 2048;
 
@@ -448,6 +452,13 @@ void LibretroHost::RegisterCoreOptions()
 			{{"disabled", "Disabled (2 players)"}, {"port1", "Port 1 (5 players)"}, {"port2", "Port 2 (5 players)"},
 				{"both", "Both Ports (8 players)"}, {nullptr, nullptr}},
 			"disabled"},
+		{"pcsx2_lightgun", "Lightgun (GunCon 2)", nullptr,
+			"Emulate a Namco GunCon 2 on a USB port, aimed with the frontend's lightgun (or mouse mapped as "
+			"lightgun) on the matching controller port. Requires restart.",
+			nullptr, "system",
+			{{"disabled", "Disabled"}, {"usb1", "USB Port 1"}, {"usb2", "USB Port 2"}, {"both", "Both Ports"},
+				{nullptr, nullptr}},
+			"disabled"},
 		// patches
 		{"pcsx2_widescreen_patches", "Widescreen Patches", nullptr,
 			"Enable built-in 16:9 widescreen patches where available. Best applied before starting a game.", nullptr,
@@ -642,6 +653,34 @@ void LibretroHost::ReadCoreOptions(bool startup)
 		// all mapped pads are DualShock 2s
 		for (const u32 pad : s_pad_map)
 			s_settings_interface.SetStringValue(fmt::format("Pad{}", pad + 1).c_str(), "Type", "DualShock2");
+	}
+
+	// lightguns: configure GunCon2 USB devices; the presence of the Relative*
+	// binding keys switches the device to relative-axis aiming, which we feed
+	// from the frontend's lightgun coordinates
+	if (startup)
+	{
+		const char* lightgun = get_option("pcsx2_lightgun", "disabled");
+		s_lightgun_mask = 0;
+		if (std::strcmp(lightgun, "usb1") == 0 || std::strcmp(lightgun, "both") == 0)
+			s_lightgun_mask |= 1;
+		if (std::strcmp(lightgun, "usb2") == 0 || std::strcmp(lightgun, "both") == 0)
+			s_lightgun_mask |= 2;
+
+		for (u32 usb_port = 0; usb_port < 2; usb_port++)
+		{
+			const std::string section = fmt::format("USB{}", usb_port + 1);
+			if (s_lightgun_mask & (1u << usb_port))
+			{
+				s_settings_interface.SetStringValue(section.c_str(), "Type", "guncon2");
+				for (const char* bind : {"RelativeLeft", "RelativeRight", "RelativeUp", "RelativeDown"})
+					s_settings_interface.SetStringValue(section.c_str(), fmt::format("guncon2_{}", bind).c_str(), "None");
+			}
+			else
+			{
+				s_settings_interface.SetStringValue(section.c_str(), "Type", "None");
+			}
+		}
 	}
 
 	if (startup)
@@ -895,6 +934,41 @@ static void UpdateInput()
 		Pad::SetControllerState(pad, PadDualshock2::Inputs::PAD_R_RIGHT, axis_value(rx, false));
 		Pad::SetControllerState(pad, PadDualshock2::Inputs::PAD_R_UP, axis_value(ry, true));
 		Pad::SetControllerState(pad, PadDualshock2::Inputs::PAD_R_DOWN, axis_value(ry, false));
+	}
+
+	// GunCon2 lightguns (bind indices from usb-lightgun/guncon2.cpp)
+	for (u32 usb_port = 0; usb_port < 2; usb_port++)
+	{
+		if (!(s_lightgun_mask & (1u << usb_port)))
+			continue;
+
+		const auto gun = [&](unsigned id) {
+			return s_input_state_cb(usb_port, RETRO_DEVICE_LIGHTGUN, 0, id);
+		};
+
+		// aim: [-0x8000,0x7fff] across the visible video -> relative half-axes
+		const float x = std::clamp(static_cast<float>(gun(RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X)) / 32767.0f, -1.0f, 1.0f);
+		const float y = std::clamp(static_cast<float>(gun(RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y)) / 32767.0f, -1.0f, 1.0f);
+		USB::SetDeviceBindValue(usb_port, 18 /* BID_RELATIVE_LEFT  */, (x < 0.0f) ? -x : 0.0f);
+		USB::SetDeviceBindValue(usb_port, 19 /* BID_RELATIVE_RIGHT */, (x > 0.0f) ? x : 0.0f);
+		USB::SetDeviceBindValue(usb_port, 20 /* BID_RELATIVE_UP    */, (y < 0.0f) ? -y : 0.0f);
+		USB::SetDeviceBindValue(usb_port, 21 /* BID_RELATIVE_DOWN  */, (y > 0.0f) ? y : 0.0f);
+
+		static constexpr std::pair<unsigned, u32> gun_buttons[] = {
+			{RETRO_DEVICE_ID_LIGHTGUN_TRIGGER, 13 /* BID_TRIGGER */},
+			{RETRO_DEVICE_ID_LIGHTGUN_RELOAD, 16 /* BID_SHOOT_OFFSCREEN */},
+			{RETRO_DEVICE_ID_LIGHTGUN_AUX_A, 3 /* BID_A */},
+			{RETRO_DEVICE_ID_LIGHTGUN_AUX_B, 2 /* BID_B */},
+			{RETRO_DEVICE_ID_LIGHTGUN_AUX_C, 1 /* BID_C */},
+			{RETRO_DEVICE_ID_LIGHTGUN_START, 15 /* BID_START */},
+			{RETRO_DEVICE_ID_LIGHTGUN_SELECT, 14 /* BID_SELECT */},
+			{RETRO_DEVICE_ID_LIGHTGUN_DPAD_UP, 4 /* BID_DPAD_UP */},
+			{RETRO_DEVICE_ID_LIGHTGUN_DPAD_DOWN, 6 /* BID_DPAD_DOWN */},
+			{RETRO_DEVICE_ID_LIGHTGUN_DPAD_LEFT, 7 /* BID_DPAD_LEFT */},
+			{RETRO_DEVICE_ID_LIGHTGUN_DPAD_RIGHT, 5 /* BID_DPAD_RIGHT */},
+		};
+		for (const auto& [retro_id, bid] : gun_buttons)
+			USB::SetDeviceBindValue(usb_port, bid, gun(retro_id) ? 1.0f : 0.0f);
 	}
 }
 
