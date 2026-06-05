@@ -163,6 +163,17 @@ bool ImGuiManager::Initialize()
 			Host::CopyTextToClipboard(text);
 	};
 
+	ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+	platform_io.Platform_GetClipboardTextFn = [](ImGuiContext* ctx) -> const char* {
+		static thread_local std::string s_clipboard_text;
+		s_clipboard_text = Host::GetTextFromClipboard();
+		return s_clipboard_text.c_str();
+	};
+	platform_io.Platform_SetClipboardTextFn = [](ImGuiContext* ctx, const char* text) {
+		if (text)
+			Host::CopyTextToClipboard(text);
+	};
+
 	g.ConfigNavWindowingKeyNext = ImGuiKey_None;
 	g.ConfigNavWindowingKeyPrev = ImGuiKey_None;
 	g.ConfigNavWindowingWithGamepad = false;
