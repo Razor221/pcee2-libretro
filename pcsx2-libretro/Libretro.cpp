@@ -17,6 +17,7 @@
 // null audio output, no pad input, no savestates. Enough to boot and render.
 
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
@@ -112,6 +113,11 @@ namespace LibretroHost
 	static constexpr u32 SAMPLE_RATE = 48000;
 	static constexpr u32 MAX_AUDIO_FRAMES_PER_RUN = 2048;
 
+	// VM timing reported to the frontend (PAL games run at 50Hz, PSX mode at
+	// 44.1kHz); updated from the CPU/audio-factory threads, consumed in retro_run
+	static std::atomic<u32> s_vm_fps_bits{0};
+	static std::atomic<u32> s_audio_sample_rate{SAMPLE_RATE};
+
 	// SPU2 output stream that the frontend pulls samples from in retro_run().
 	// Reads happen while the CPU thread is parked in PumpMessagesOnCPUThread(),
 	// and the ring buffer is SPSC-atomic anyway, so no extra locking is needed.
@@ -167,6 +173,7 @@ namespace LibretroHost
 		std::unique_ptr<LibretroAudioStream> stream = std::make_unique<LibretroAudioStream>(sample_rate, parameters);
 		stream->Initialize();
 		s_audio_stream = stream.get();
+		s_audio_sample_rate.store(sample_rate, std::memory_order_release);
 		return stream;
 	}
 
@@ -495,14 +502,17 @@ void retro_get_system_info(struct retro_system_info* info)
 
 void retro_get_system_av_info(struct retro_system_av_info* info)
 {
+	const u32 fps_bits = s_vm_fps_bits.load(std::memory_order_acquire);
+	const float fps = fps_bits ? std::bit_cast<float>(fps_bits) : 59.94f;
+
 	std::memset(info, 0, sizeof(*info));
 	info->geometry.base_width = s_out_width.load(std::memory_order_acquire);
 	info->geometry.base_height = s_out_height.load(std::memory_order_acquire);
 	info->geometry.max_width = MAX_WIDTH;
 	info->geometry.max_height = MAX_HEIGHT;
 	info->geometry.aspect_ratio = 4.0f / 3.0f;
-	info->timing.fps = 59.94;
-	info->timing.sample_rate = static_cast<double>(SAMPLE_RATE);
+	info->timing.fps = static_cast<double>(fps);
+	info->timing.sample_rate = static_cast<double>(s_audio_sample_rate.load(std::memory_order_acquire));
 }
 
 void retro_init(void)
@@ -675,6 +685,39 @@ static void OutputAudio()
 	s_audio_frames_output.fetch_add(frames, std::memory_order_relaxed);
 }
 
+// Re-announce av_info whenever the VM's timing or our output size changes
+// (PAL 50Hz detection after boot, PSX-mode 44.1kHz, upscale option, ...).
+static void UpdateAVInfoIfChanged()
+{
+	static u32 last_fps_bits = 0;
+	static u32 last_sample_rate = 0;
+	static u32 last_width = 0;
+	static u32 last_height = 0;
+
+	const u32 fps_bits = s_vm_fps_bits.load(std::memory_order_acquire);
+	const u32 sample_rate = s_audio_sample_rate.load(std::memory_order_acquire);
+	const u32 width = s_out_width.load(std::memory_order_acquire);
+	const u32 height = s_out_height.load(std::memory_order_acquire);
+
+	if (fps_bits == last_fps_bits && sample_rate == last_sample_rate && width == last_width && height == last_height)
+		return;
+
+	// don't announce anything until the VM has reported a real frame rate
+	if (fps_bits == 0)
+		return;
+
+	last_fps_bits = fps_bits;
+	last_sample_rate = sample_rate;
+	last_width = width;
+	last_height = height;
+
+	retro_system_av_info av_info;
+	retro_get_system_av_info(&av_info);
+	s_environ_cb(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av_info);
+	INFO_LOG("libretro av_info: {}x{} @ {:.2f}Hz, {}Hz audio", av_info.geometry.base_width,
+		av_info.geometry.base_height, av_info.timing.fps, sample_rate);
+}
+
 void retro_run(void)
 {
 	// apply core option changes on the fly
@@ -684,11 +727,9 @@ void retro_run(void)
 	{
 		ReadCoreOptions(false);
 		Host::RunOnCPUThread([]() { VMManager::ApplySettings(); });
-
-		retro_system_av_info av_info;
-		retro_get_system_av_info(&av_info);
-		s_environ_cb(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av_info);
 	}
+
+	UpdateAVInfoIfChanged();
 
 	if (s_running.load(std::memory_order_acquire))
 		UpdateInput();
@@ -823,7 +864,8 @@ void retro_cheat_set(unsigned index, bool enabled, const char* code) {}
 
 unsigned retro_get_region(void)
 {
-	return RETRO_REGION_NTSC;
+	const u32 fps_bits = s_vm_fps_bits.load(std::memory_order_acquire);
+	return (fps_bits && std::bit_cast<float>(fps_bits) < 55.0f) ? RETRO_REGION_PAL : RETRO_REGION_NTSC;
 }
 
 void retro_set_controller_port_device(unsigned port, unsigned device) {}
@@ -1140,6 +1182,11 @@ void Host::PumpMessagesOnCPUThread()
 
 	if (!s_running.load(std::memory_order_acquire))
 		return;
+
+	// track the VM's vertical frequency for PAL/NTSC av_info reporting
+	const float fps = VMManager::GetFrameRate();
+	if (fps > 0.0f)
+		s_vm_fps_bits.store(std::bit_cast<u32>(fps), std::memory_order_release);
 
 	// frames arrive asynchronously via FramebufferReadbackCallback on the GS
 	// thread; nothing to read back here
