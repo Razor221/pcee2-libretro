@@ -227,10 +227,12 @@ void LibretroHost::SettingsOverride()
 	// Surfaceless (swapchain-less) device, and we read frames back anyway
 	s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", static_cast<int>(GSRendererType::VK));
 
-	// all input comes through the libretro API, not host devices
+	// All input comes through the libretro API, not host devices. The default
+	// keyboard bindings are left in place — we never feed host key events, so
+	// they are inert, and their presence suppresses the "controller not
+	// configured" OSD warning.
 	s_settings_interface.SetBoolValue("InputSources", "SDL", false);
 	s_settings_interface.SetBoolValue("InputSources", "XInput", false);
-	Pad::ClearPortBindings(s_settings_interface, 0);
 	s_settings_interface.ClearSection("Hotkeys");
 
 	// v1: no audio output yet
@@ -893,6 +895,10 @@ void Host::PumpMessagesOnCPUThread()
 	const bool snapshot_ok = MTGS::SaveMemorySnapshot(DEFAULT_WIDTH, DEFAULT_HEIGHT, true, false, &width, &height, &pixels);
 	if (snapshot_ok)
 	{
+		// snapshot is RGBA (R in the low byte); libretro XRGB8888 wants B low
+		for (u32& px : pixels)
+			px = (px & 0xFF00FF00u) | ((px & 0xFFu) << 16) | ((px >> 16) & 0xFFu);
+
 		std::unique_lock lock(s_frame_mutex);
 		s_frame_pixels = std::move(pixels);
 		s_frame_width = width;
