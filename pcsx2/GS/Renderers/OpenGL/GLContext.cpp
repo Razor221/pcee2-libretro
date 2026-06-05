@@ -6,6 +6,7 @@
 #if defined(_WIN32)
 #include "GS/Renderers/OpenGL/GLContextWGL.h"
 #else // Linux
+#include "GS/Renderers/OpenGL/GLContextEGL.h"
 #ifdef X11_API
 #include "GS/Renderers/OpenGL/GLContextEGLX11.h"
 #endif
@@ -54,6 +55,12 @@ std::unique_ptr<GLContext> GLContext::Create(const WindowInfo& wi, Error* error)
 	if (wi.type == WindowInfo::Type::Wayland)
 		context = GLContextEGLWayland::Create(wi, vlist, error);
 #endif
+
+	// headless/offscreen rendering (e.g. the libretro frontend): the base EGL
+	// context supports surfaceless via EGL_MESA_platform_surfaceless or a
+	// pbuffer fallback
+	if (wi.type == WindowInfo::Type::Surfaceless)
+		context = GLContextEGL::Create(wi, vlist, error);
 #endif
 
 	if (!context)
