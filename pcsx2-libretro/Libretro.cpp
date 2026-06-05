@@ -41,6 +41,8 @@
 #include "pcsx2/Config.h"
 #include "pcsx2/GS.h"
 #include "pcsx2/Host.h"
+#include "pcsx2/ImGui/FullscreenUI.h"
+#include "pcsx2/ImGui/ImGuiFullscreen.h"
 #include "pcsx2/ImGui/ImGuiManager.h"
 #include "pcsx2/Input/InputManager.h"
 #include "pcsx2/MTGS.h"
