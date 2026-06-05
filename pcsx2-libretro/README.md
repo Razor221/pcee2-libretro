@@ -67,10 +67,27 @@ ninja -C build-libretro pcsx2-libretro
 
 | Option | Values | Notes |
 |---|---|---|
-| Renderer | Vulkan / Software | applies on the fly |
-| Internal Resolution | 1x–4x | applies on the fly, scales output too |
 | BIOS | auto / discovered images | restart required |
 | Fast Boot | enabled / disabled | restart required |
+| Renderer | Vulkan / Software | applies on the fly |
+| Internal Resolution | 1x–4x | applies on the fly, scales output too |
+| Blending Accuracy | Minimum–Maximum | default Basic |
+| Texture Filtering | Nearest / Bilinear (PS2/Forced/Forced-no-sprites) | default PS2 |
+| Trilinear Filtering | Auto / Off / PS2 / Forced | |
+| Anisotropic Filtering | Off–16x | |
+| Dithering | Off / Scaled / Unscaled | default Unscaled |
+| Hardware Mipmapping | enabled / disabled | |
+| Deinterlacing | Automatic + 8 manual modes | default GameDB-driven |
+| FXAA | enabled / disabled | |
+| CAS (sharpening) | Disabled / Sharpen Only + sharpness 10–100 | |
+| Widescreen Patches | enabled / disabled | built-in 16:9 patches |
+| No-Interlacing Patches | enabled / disabled | built-in progressive patches |
+| EE Cycle Rate | 50%–300% | speed hack, may break games |
+| EE Cycle Skip | Disabled–Maximum | speed hack, may break games |
+
+All graphics options map directly onto the corresponding standalone PCSX2
+settings; anything not exposed yet runs at the standalone default (including
+automatic per-game fixes from the GameDB).
 
 ## Architecture notes
 

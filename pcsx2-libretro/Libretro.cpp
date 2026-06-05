@@ -328,34 +328,107 @@ void LibretroHost::RegisterCoreOptions()
 		}
 	}
 
+	static retro_core_option_v2_category categories[] = {
+		{"system", "System", "BIOS and boot behaviour."},
+		{"graphics", "Graphics", "Renderer, resolution and image quality."},
+		{"patches", "Patches", "Built-in game patches (widescreen, no-interlacing)."},
+		{"performance", "Performance", "Speed hacks. May break games."},
+		{nullptr, nullptr, nullptr},
+	};
+
 	retro_core_option_v2_definition definitions[] = {
+		// system
+		{"pcsx2_bios", "BIOS", nullptr, "BIOS image to use, from <system>/pcsx2/bios. Requires restart.", nullptr,
+			"system", {{nullptr, nullptr}}, "auto"},
+		{"pcsx2_fast_boot", "Fast Boot", nullptr, "Skip the BIOS boot animation. Requires restart.", nullptr,
+			"system", {{"enabled", nullptr}, {"disabled", nullptr}, {nullptr, nullptr}}, "enabled"},
+		// graphics
 		{"pcsx2_renderer", "Renderer", nullptr,
 			"Vulkan hardware renderer or the software renderer (also presented through Vulkan). Applies on the fly.",
-			nullptr, nullptr,
+			nullptr, "graphics",
 			{{"vulkan", "Vulkan (Hardware)"}, {"software", "Software"}, {nullptr, nullptr}}, "vulkan"},
 		{"pcsx2_upscale_multiplier", "Internal Resolution", nullptr,
 			"Internal rendering resolution multiplier for the hardware renderer. Also scales the output framebuffer. Applies on the fly.",
-			nullptr, nullptr,
+			nullptr, "graphics",
 			{{"1", "1x Native (640x480)"}, {"2", "2x Native (1280x960)"}, {"3", "3x Native (1920x1440)"},
 				{"4", "4x Native (2560x1920)"}, {nullptr, nullptr}},
 			"1"},
-		{"pcsx2_bios", "BIOS", nullptr, "BIOS image to use, from <system>/pcsx2/bios. Requires restart.", nullptr,
-			nullptr, {{nullptr, nullptr}}, "auto"},
-		{"pcsx2_fast_boot", "Fast Boot", nullptr, "Skip the BIOS boot animation. Requires restart.", nullptr, nullptr,
+		{"pcsx2_blending_accuracy", "Blending Accuracy", nullptr,
+			"Higher levels emulate more PS2 blending effects correctly at a GPU cost.", nullptr, "graphics",
+			{{"minimum", "Minimum"}, {"basic", "Basic (Recommended)"}, {"medium", "Medium"}, {"high", "High"},
+				{"full", "Full (Slow)"}, {"maximum", "Maximum (Very Slow)"}, {nullptr, nullptr}},
+			"basic"},
+		{"pcsx2_texture_filtering", "Texture Filtering", nullptr,
+			"Bilinear (PS2) replicates the console; forced modes smooth all textures.", nullptr, "graphics",
+			{{"nearest", "Nearest"}, {"bilinear_ps2", "Bilinear (PS2)"}, {"bilinear_forced", "Bilinear (Forced)"},
+				{"bilinear_forced_sprite", "Bilinear (Forced excluding sprites)"}, {nullptr, nullptr}},
+			"bilinear_ps2"},
+		{"pcsx2_trilinear_filtering", "Trilinear Filtering", nullptr, nullptr, nullptr, "graphics",
+			{{"auto", "Automatic (Default)"}, {"off", "Off"}, {"ps2", "Trilinear (PS2)"}, {"forced", "Trilinear (Forced)"},
+				{nullptr, nullptr}},
+			"auto"},
+		{"pcsx2_anisotropic_filtering", "Anisotropic Filtering", nullptr,
+			"Reduces texture aliasing at steep angles.", nullptr, "graphics",
+			{{"0", "Off"}, {"2", "2x"}, {"4", "4x"}, {"8", "8x"}, {"16", "16x"}, {nullptr, nullptr}}, "0"},
+		{"pcsx2_dithering", "Dithering", nullptr,
+			"Unscaled (default) replicates PS2 dithering; Off can reduce banding artifacts at high resolutions.",
+			nullptr, "graphics",
+			{{"0", "Off"}, {"1", "Scaled"}, {"2", "Unscaled (Default)"}, {nullptr, nullptr}}, "2"},
+		{"pcsx2_mipmapping", "Hardware Mipmapping", nullptr, nullptr, nullptr, "graphics",
 			{{"enabled", nullptr}, {"disabled", nullptr}, {nullptr, nullptr}}, "enabled"},
+		{"pcsx2_deinterlace_mode", "Deinterlacing", nullptr,
+			"Automatic uses the GameDB-recommended mode per game.", nullptr, "graphics",
+			{{"0", "Automatic (Default)"}, {"1", "Off"}, {"2", "Weave (TFF)"}, {"3", "Weave (BFF)"},
+				{"4", "Bob (TFF)"}, {"5", "Bob (BFF)"}, {"6", "Blend (TFF)"}, {"7", "Blend (BFF)"},
+				{"8", "Adaptive (TFF)"}, {"9", "Adaptive (BFF)"}, {nullptr, nullptr}},
+			"0"},
+		{"pcsx2_fxaa", "FXAA", nullptr, "Cheap post-process anti-aliasing.", nullptr, "graphics",
+			{{"disabled", nullptr}, {"enabled", nullptr}, {nullptr, nullptr}}, "disabled"},
+		{"pcsx2_cas_mode", "Contrast Adaptive Sharpening", nullptr, nullptr, nullptr, "graphics",
+			{{"disabled", "Disabled"}, {"sharpen", "Sharpen Only"}, {nullptr, nullptr}}, "disabled"},
+		{"pcsx2_cas_sharpness", "CAS Sharpness", nullptr, nullptr, nullptr, "graphics",
+			{{"10", nullptr}, {"20", nullptr}, {"30", nullptr}, {"40", nullptr}, {"50", nullptr}, {"60", nullptr},
+				{"70", nullptr}, {"80", nullptr}, {"90", nullptr}, {"100", nullptr}, {nullptr, nullptr}},
+			"50"},
+		// patches
+		{"pcsx2_widescreen_patches", "Widescreen Patches", nullptr,
+			"Enable built-in 16:9 widescreen patches where available. Best applied before starting a game.", nullptr,
+			"patches", {{"disabled", nullptr}, {"enabled", nullptr}, {nullptr, nullptr}}, "disabled"},
+		{"pcsx2_no_interlacing_patches", "No-Interlacing Patches", nullptr,
+			"Enable built-in progressive-output patches where available. Best applied before starting a game.", nullptr,
+			"patches", {{"disabled", nullptr}, {"enabled", nullptr}, {nullptr, nullptr}}, "disabled"},
+		// performance
+		{"pcsx2_ee_cycle_rate", "EE Cycle Rate", nullptr,
+			"Underclock or overclock the emulated Emotion Engine. Default 100%. May break games.", nullptr,
+			"performance",
+			{{"-3", "50% (Underclock)"}, {"-2", "60% (Underclock)"}, {"-1", "75% (Underclock)"},
+				{"0", "100% (Default)"}, {"1", "130% (Overclock)"}, {"2", "180% (Overclock)"},
+				{"3", "300% (Overclock)"}, {nullptr, nullptr}},
+			"0"},
+		{"pcsx2_ee_cycle_skip", "EE Cycle Skip", nullptr,
+			"Makes the EE skip cycles. Helps some games with high VU activity, breaks others.", nullptr,
+			"performance",
+			{{"0", "Disabled (Default)"}, {"1", "Mild"}, {"2", "Moderate"}, {"3", "Maximum"}, {nullptr, nullptr}},
+			"0"},
 		{nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, {{nullptr, nullptr}}, nullptr},
 	};
 
 	// fill in the discovered BIOS list (bounded by the option value array size)
-	const size_t max_bios = std::min(s_bios_names.size(), std::size(definitions[2].values) - 1);
-	for (size_t i = 0; i < max_bios; i++)
-		definitions[2].values[i] = {s_bios_names[i].c_str(), nullptr};
-	definitions[2].values[max_bios] = {nullptr, nullptr};
+	for (retro_core_option_v2_definition& def : definitions)
+	{
+		if (!def.key || std::strcmp(def.key, "pcsx2_bios") != 0)
+			continue;
+		const size_t max_bios = std::min(s_bios_names.size(), std::size(def.values) - 1);
+		for (size_t i = 0; i < max_bios; i++)
+			def.values[i] = {s_bios_names[i].c_str(), nullptr};
+		def.values[max_bios] = {nullptr, nullptr};
+		break;
+	}
 
 	unsigned version = 0;
 	if (s_environ_cb(RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION, &version) && version >= 2)
 	{
-		retro_core_options_v2 options = {nullptr, definitions};
+		retro_core_options_v2 options = {categories, definitions};
 		s_environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options);
 		return;
 	}
@@ -405,6 +478,73 @@ void LibretroHost::ReadCoreOptions(bool startup)
 	s_out_width.store(DEFAULT_WIDTH * upscale, std::memory_order_release);
 	s_out_height.store(DEFAULT_HEIGHT * upscale, std::memory_order_release);
 	GSSetFramebufferReadback(&FramebufferReadbackCallback, DEFAULT_WIDTH * upscale, DEFAULT_HEIGHT * upscale);
+
+	// graphics quality
+	const auto get_int_option = [&get_option](const char* key, const char* fallback) {
+		return StringUtil::FromChars<int>(get_option(key, fallback)).value_or(StringUtil::FromChars<int>(fallback).value_or(0));
+	};
+
+	static constexpr std::pair<const char*, AccBlendLevel> blend_levels[] = {
+		{"minimum", AccBlendLevel::Minimum}, {"basic", AccBlendLevel::Basic}, {"medium", AccBlendLevel::Medium},
+		{"high", AccBlendLevel::High}, {"full", AccBlendLevel::Full}, {"maximum", AccBlendLevel::Maximum}};
+	const char* blend = get_option("pcsx2_blending_accuracy", "basic");
+	for (const auto& [name, level] : blend_levels)
+	{
+		if (std::strcmp(blend, name) == 0)
+		{
+			s_settings_interface.SetIntValue("EmuCore/GS", "accurate_blending_unit", static_cast<int>(level));
+			break;
+		}
+	}
+
+	static constexpr std::pair<const char*, BiFiltering> bi_filters[] = {
+		{"nearest", BiFiltering::Nearest}, {"bilinear_ps2", BiFiltering::PS2},
+		{"bilinear_forced", BiFiltering::Forced}, {"bilinear_forced_sprite", BiFiltering::Forced_But_Sprite}};
+	const char* bi = get_option("pcsx2_texture_filtering", "bilinear_ps2");
+	for (const auto& [name, mode] : bi_filters)
+	{
+		if (std::strcmp(bi, name) == 0)
+		{
+			s_settings_interface.SetIntValue("EmuCore/GS", "filter", static_cast<int>(mode));
+			break;
+		}
+	}
+
+	static constexpr std::pair<const char*, TriFiltering> tri_filters[] = {
+		{"auto", TriFiltering::Automatic}, {"off", TriFiltering::Off}, {"ps2", TriFiltering::PS2},
+		{"forced", TriFiltering::Forced}};
+	const char* tri = get_option("pcsx2_trilinear_filtering", "auto");
+	for (const auto& [name, mode] : tri_filters)
+	{
+		if (std::strcmp(tri, name) == 0)
+		{
+			s_settings_interface.SetIntValue("EmuCore/GS", "TriFilter", static_cast<int>(mode));
+			break;
+		}
+	}
+
+	s_settings_interface.SetIntValue("EmuCore/GS", "MaxAnisotropy", get_int_option("pcsx2_anisotropic_filtering", "0"));
+	s_settings_interface.SetIntValue("EmuCore/GS", "dithering_ps2", get_int_option("pcsx2_dithering", "2"));
+	s_settings_interface.SetBoolValue("EmuCore/GS", "hw_mipmap",
+		std::strcmp(get_option("pcsx2_mipmapping", "enabled"), "enabled") == 0);
+	s_settings_interface.SetIntValue("EmuCore/GS", "deinterlace_mode", get_int_option("pcsx2_deinterlace_mode", "0"));
+	s_settings_interface.SetBoolValue("EmuCore/GS", "fxaa",
+		std::strcmp(get_option("pcsx2_fxaa", "disabled"), "enabled") == 0);
+	s_settings_interface.SetIntValue("EmuCore/GS", "CASMode",
+		std::strcmp(get_option("pcsx2_cas_mode", "disabled"), "sharpen") == 0 ?
+			static_cast<int>(GSCASMode::SharpenOnly) :
+			static_cast<int>(GSCASMode::Disabled));
+	s_settings_interface.SetIntValue("EmuCore/GS", "CASSharpness", get_int_option("pcsx2_cas_sharpness", "50"));
+
+	// patches
+	s_settings_interface.SetBoolValue("EmuCore", "EnableWideScreenPatches",
+		std::strcmp(get_option("pcsx2_widescreen_patches", "disabled"), "enabled") == 0);
+	s_settings_interface.SetBoolValue("EmuCore", "EnableNoInterlacingPatches",
+		std::strcmp(get_option("pcsx2_no_interlacing_patches", "disabled"), "enabled") == 0);
+
+	// performance
+	s_settings_interface.SetIntValue("EmuCore/Speedhacks", "EECycleRate", get_int_option("pcsx2_ee_cycle_rate", "0"));
+	s_settings_interface.SetIntValue("EmuCore/Speedhacks", "EECycleSkip", get_int_option("pcsx2_ee_cycle_skip", "0"));
 
 	if (startup)
 	{
