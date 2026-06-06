@@ -120,6 +120,21 @@ namespace LibretroHost
 
 	// GunCon2 lightguns on USB ports (bit 0 = USB1, bit 1 = USB2)
 	static u32 s_lightgun_mask = 0;
+
+	// rumble: written by the InputManager callback (CPU thread), consumed in
+	// retro_run; packed as (large << 16) | small, each 0..65535
+	static std::array<std::atomic<u32>, 8> s_pad_rumble;
+	static bool s_rumble_enabled = true;
+	static retro_rumble_interface s_rumble_interface = {};
+
+	static void PadVibrationCallback(u32 pad_index, float large_motor, float small_motor)
+	{
+		if (pad_index >= s_pad_rumble.size())
+			return;
+		const u32 large = static_cast<u32>(std::clamp(large_motor, 0.0f, 1.0f) * 65535.0f);
+		const u32 small = static_cast<u32>(std::clamp(small_motor, 0.0f, 1.0f) * 65535.0f);
+		s_pad_rumble[pad_index].store((large << 16) | small, std::memory_order_relaxed);
+	}
 	static constexpr u32 SAMPLE_RATE = 48000;
 	static constexpr u32 MAX_AUDIO_FRAMES_PER_RUN = 2048;
 
@@ -286,6 +301,9 @@ bool LibretroHost::InitializeConfig()
 				"EmuCore/CPU/Recompiler",
 				"EmuCore/GS",
 				"EmuCore/Gamefixes",
+				"MemoryCards",
+				"DEV9/Eth",
+				"DEV9/Hdd",
 			};
 
 			u32 merged = 0;
@@ -459,6 +477,19 @@ void LibretroHost::RegisterCoreOptions()
 			{{"disabled", "Disabled"}, {"usb1", "USB Port 1"}, {"usb2", "USB Port 2"}, {"both", "Both Ports"},
 				{nullptr, nullptr}},
 			"disabled"},
+		{"pcsx2_rumble", "Rumble", nullptr, "Forward DualShock 2 vibration to the frontend's rumble support.",
+			nullptr, "system", {{"enabled", nullptr}, {"disabled", nullptr}, {nullptr, nullptr}}, "enabled"},
+		{"pcsx2_axis_scale", "Analog Axis Scale", nullptr,
+			"Scales stick input like a real DualShock 2 (PCSX2 default 133%). Lower if diagonals feel clamped.",
+			nullptr, "system",
+			{{"100", "100%"}, {"115", "115%"}, {"133", "133% (Default)"}, {"150", "150%"}, {nullptr, nullptr}},
+			"133"},
+		{"pcsx2_axis_deadzone", "Analog Deadzone", nullptr,
+			"Stick deadzone applied inside the emulated controller, on top of any frontend deadzone.", nullptr,
+			"system",
+			{{"0", "0% (Default)"}, {"5", "5%"}, {"10", "10%"}, {"15", "15%"}, {"20", "20%"}, {"30", "30%"},
+				{nullptr, nullptr}},
+			"0"},
 		// patches
 		{"pcsx2_widescreen_patches", "Widescreen Patches", nullptr,
 			"Enable built-in 16:9 widescreen patches where available. Best applied before starting a game.", nullptr,
@@ -650,9 +681,18 @@ void LibretroHost::ReadCoreOptions(bool startup)
 			s_pad_map.push_back(7); // 2D
 		}
 
-		// all mapped pads are DualShock 2s
+		// all mapped pads are DualShock 2s, with the configured analog response
+		const float axis_scale = static_cast<float>(get_int_option("pcsx2_axis_scale", "133")) / 100.0f;
+		const float axis_deadzone = static_cast<float>(get_int_option("pcsx2_axis_deadzone", "0")) / 100.0f;
 		for (const u32 pad : s_pad_map)
-			s_settings_interface.SetStringValue(fmt::format("Pad{}", pad + 1).c_str(), "Type", "DualShock2");
+		{
+			const std::string section = fmt::format("Pad{}", pad + 1);
+			s_settings_interface.SetStringValue(section.c_str(), "Type", "DualShock2");
+			s_settings_interface.SetFloatValue(section.c_str(), "AxisScale", axis_scale);
+			s_settings_interface.SetFloatValue(section.c_str(), "Deadzone", axis_deadzone);
+		}
+
+		s_rumble_enabled = std::strcmp(get_option("pcsx2_rumble", "enabled"), "enabled") == 0;
 	}
 
 	// lightguns: configure GunCon2 USB devices; the presence of the Relative*
@@ -822,6 +862,10 @@ bool retro_load_game(const struct retro_game_info* game)
 	SettingsOverride();
 
 	SPU2::CustomOutputStreamFactory = &CreateLibretroAudioStream;
+	InputManager::SetPadVibrationCallback(&PadVibrationCallback);
+	for (auto& r : s_pad_rumble)
+		r.store(0, std::memory_order_relaxed);
+	s_environ_cb(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE, &s_rumble_interface);
 
 	s_boot_params = VMBootParameters();
 	s_boot_params.filename = game->path;
@@ -1064,6 +1108,17 @@ void retro_run(void)
 
 	if (s_running.load(std::memory_order_acquire))
 		UpdateInput();
+
+	// forward DS2 vibration to the frontend
+	if (s_rumble_interface.set_rumble_state)
+	{
+		for (u32 port = 0; port < static_cast<u32>(s_pad_map.size()); port++)
+		{
+			const u32 packed = s_rumble_enabled ? s_pad_rumble[s_pad_map[port]].load(std::memory_order_relaxed) : 0;
+			s_rumble_interface.set_rumble_state(port, RETRO_RUMBLE_STRONG, static_cast<u16>(packed >> 16));
+			s_rumble_interface.set_rumble_state(port, RETRO_RUMBLE_WEAK, static_cast<u16>(packed & 0xFFFF));
+		}
+	}
 
 	if (!s_running.load(std::memory_order_acquire))
 	{

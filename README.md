@@ -55,7 +55,7 @@ workflow.
 2. Copy the `resources` directory from a PCSX2 installation (or from `bin/resources` of this repo) to `<retroarch system dir>/pcsx2/resources/`.
 3. For built-in game patches (including the widescreen / no-interlacing options), download [`patches.zip`](https://github.com/PCSX2/pcsx2_patches/releases/latest/download/patches.zip) into `<retroarch system dir>/pcsx2/resources/patches.zip`.
 4. Load a disc image (`.iso`, `.chd`, `.cso`, `.gz`, `.bin`, `.mdf`, `.nrg`, `.elf`) with the core.
-5. Optional: copy your standalone `PCSX2.ini` to `<retroarch system dir>/pcsx2/inis/PCSX2.ini` — the core adopts its emulation settings (EmuCore, speed hacks, CPU, GS, game fixes) as the baseline. Core options still override their respective settings.
+5. Optional: copy your standalone `PCSX2.ini` to `<retroarch system dir>/pcsx2/inis/PCSX2.ini` — the core adopts its emulation settings (EmuCore, speed hacks, CPU, GS, game fixes, memory cards, DEV9 network/HDD) as the baseline. Core options still override their respective settings.
 
 Memory cards, savestates metadata, cache, etc. live under
 `<retroarch system dir>/pcsx2/`.
@@ -107,6 +107,9 @@ Windows builds use MSVC + Ninja with upstream's dependency script — see
 | EE Cycle Skip | Disabled–Maximum | speed hack, may break games |
 | Multitap | Disabled / Port 1 / Port 2 / Both | up to 8 players, restart recommended |
 | Lightgun (GunCon 2) | Disabled / USB 1 / USB 2 / Both | aim via frontend lightgun input, restart required |
+| Rumble | enabled / disabled | DS2 vibration via frontend rumble |
+| Analog Axis Scale | 100–150% | default 133% (DualShock 2 response) |
+| Analog Deadzone | 0–30% | inside the emulated pad |
 
 All graphics options map directly onto the corresponding standalone PCSX2
 settings; anything not exposed yet runs at the standalone default (including
