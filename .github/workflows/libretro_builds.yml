@@ -114,6 +114,16 @@ jobs:
           mkdir artifact
           copy build\bin\pcee2_libretro.dll artifact\ || exit /b
           copy pcsx2-libretro\pcee2_libretro.info artifact\ || exit /b
+          mkdir artifact\place-next-to-retroarch-exe
+          copy deps\bin\*.dll artifact\place-next-to-retroarch-exe\ || exit /b
+          (
+            echo PCEE2 libretro core - Windows installation
+            echo ============================================
+            echo 1. Copy pcee2_libretro.dll and pcee2_libretro.info into your RetroArch "cores" directory.
+            echo 2. Copy ALL .dll files from "place-next-to-retroarch-exe" into the directory that contains retroarch.exe.
+            echo    ^(Windows resolves a core's dependencies from the application directory, not the cores directory.^)
+            echo 3. Requires the Microsoft Visual C++ 2015-2022 Redistributable x64.
+          ) > artifact\README.txt
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
