@@ -53,6 +53,9 @@ clone webmproject/libwebp libwebp "$WEBP"
 build libwebp -DWEBP_BUILD_ANIM_UTILS=OFF -DWEBP_BUILD_CWEBP=OFF -DWEBP_BUILD_DWEBP=OFF \
 	-DWEBP_BUILD_GIF2WEBP=OFF -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF \
 	-DWEBP_BUILD_WEBPINFO=OFF -DWEBP_BUILD_WEBPMUX=OFF -DWEBP_BUILD_EXTRAS=OFF
+# merge sharpyuv into libwebp so module-style find_package links cleanly
+libtool -static -o "$PREFIX/lib/libwebp_merged.a" "$PREFIX/lib/libwebp.a" "$PREFIX/lib/libsharpyuv.a"
+mv "$PREFIX/lib/libwebp_merged.a" "$PREFIX/lib/libwebp.a"
 
 clone lz4/lz4 lz4 "$LZ4"
 cmake -S lz4/build/cmake -B lz4/b "${COMMON[@]}" -DLZ4_BUILD_CLI=OFF -DLZ4_BUILD_LEGACY_LZ4C=OFF
