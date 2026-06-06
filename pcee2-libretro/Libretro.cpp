@@ -78,10 +78,18 @@ namespace LibretroHost
 	static MemorySettingsInterface s_settings_interface;
 	static std::string s_system_dir;
 
-	// CPU thread management
+	// CPU thread management. The thread persists across game sessions (like
+	// the Qt frontend's EmuThread) because VMManager::Internal::
+	// CPUThreadInitialize may only run once per process (page fault handler,
+	// COM init, ...). Games are booted in a request loop.
 	static std::thread s_cpu_thread;
 	static std::atomic_bool s_running{false};
 	static VMBootParameters s_boot_params;
+	static std::mutex s_session_mutex;
+	static std::condition_variable s_session_cv;
+	static bool s_boot_requested = false;
+	static bool s_exit_requested = false;
+	static bool s_session_active = false;
 
 	// frame pacing: retro_run() posts a run token, CPU thread posts frame-done
 	static std::mutex s_frame_mutex;
@@ -259,6 +267,9 @@ bool LibretroHost::InitializeConfig()
 	EmuFolders::UserResources = EmuFolders::Resources;
 	EmuFolders::Settings = Path::Combine(s_system_dir, "inis");
 
+	// crash dumps belong in our data directory, not the frontend's cwd
+	CrashHandler::SetWriteDirectory(EmuFolders::DataRoot);
+
 	if (!FileSystem::DirectoryExists(EmuFolders::Resources.c_str()))
 	{
 		Console.ErrorFmt("PCSX2 resources directory not found at '{}'. Copy the 'resources' directory from a "
@@ -296,7 +307,16 @@ bool LibretroHost::InitializeConfig()
 	}
 
 	MemorySettingsInterface& si = s_settings_interface;
-	Host::Internal::SetBaseSettingsLayer(&si);
+
+	// content can be loaded repeatedly in one core session (RetroArch's
+	// "Close Content" keeps the core resident); the base layer may only be
+	// registered once
+	static bool s_settings_layer_registered = false;
+	if (!s_settings_layer_registered)
+	{
+		Host::Internal::SetBaseSettingsLayer(&si);
+		s_settings_layer_registered = true;
+	}
 
 	VMManager::SetDefaultSettings(si, true, true, true, true, true);
 
@@ -755,32 +775,57 @@ void LibretroHost::CPUThreadMain()
 {
 	s_cpu_thread_id = std::this_thread::get_id();
 
-	if (VMManager::Internal::CPUThreadInitialize())
-	{
-		VMManager::ApplySettings();
+	const bool init_ok = VMManager::Internal::CPUThreadInitialize();
+	if (!init_ok)
+		Console.Error("CPUThreadInitialize() failed.");
 
-		if (VMManager::Initialize(s_boot_params) == VMBootResult::StartupSuccess)
+	for (;;)
+	{
 		{
-			VMManager::SetState(VMState::Running);
-			// the frontend paces us through retro_run(); never wall-clock throttle
-			VMManager::SetLimiterMode(LimiterModeType::Unlimited);
-			while (VMManager::GetState() == VMState::Running && s_running.load(std::memory_order_acquire))
-				VMManager::Execute();
-			VMManager::Shutdown(false);
+			std::unique_lock lock(s_session_mutex);
+			s_session_cv.wait(lock, []() { return s_boot_requested || s_exit_requested; });
+			if (s_exit_requested)
+				break;
+			s_boot_requested = false;
 		}
-		else
+
+		if (init_ok)
 		{
-			Console.Error("VMManager::Initialize() failed.");
+			VMManager::ApplySettings();
+
+			if (VMManager::Initialize(s_boot_params) == VMBootResult::StartupSuccess)
+			{
+				VMManager::SetState(VMState::Running);
+				// the frontend paces us through retro_run(); never wall-clock throttle
+				VMManager::SetLimiterMode(LimiterModeType::Unlimited);
+				while (VMManager::GetState() == VMState::Running && s_running.load(std::memory_order_acquire))
+					VMManager::Execute();
+				VMManager::Shutdown(false);
+			}
+			else
+			{
+				Console.Error("VMManager::Initialize() failed.");
+			}
 		}
+
+		s_running.store(false, std::memory_order_release);
+
+		// wake up a potentially waiting retro_run()
+		{
+			std::unique_lock lock(s_frame_mutex);
+			s_frame_ready = true;
+		}
+		s_frame_cv.notify_all();
+
+		// let retro_unload_game() proceed
+		{
+			std::unique_lock lock(s_session_mutex);
+			s_session_active = false;
+		}
+		s_session_cv.notify_all();
 	}
 
 	VMManager::Internal::CPUThreadShutdown();
-	s_running.store(false, std::memory_order_release);
-
-	// wake up a potentially waiting retro_run()
-	std::unique_lock lock(s_frame_mutex);
-	s_frame_ready = true;
-	s_frame_cv.notify_all();
 }
 
 void LibretroHost::DrainCPUWork()
@@ -858,6 +903,16 @@ void retro_init(void)
 
 void retro_deinit(void)
 {
+	if (s_cpu_thread.joinable())
+	{
+		{
+			std::unique_lock lock(s_session_mutex);
+			s_exit_requested = true;
+		}
+		s_session_cv.notify_all();
+		s_cpu_thread.join();
+		s_exit_requested = false;
+	}
 }
 
 bool retro_load_game(const struct retro_game_info* game)
@@ -896,7 +951,14 @@ bool retro_load_game(const struct retro_game_info* game)
 	}
 
 	s_running.store(true, std::memory_order_release);
-	s_cpu_thread = std::thread(CPUThreadMain);
+	{
+		std::unique_lock lock(s_session_mutex);
+		s_boot_requested = true;
+		s_session_active = true;
+	}
+	if (!s_cpu_thread.joinable())
+		s_cpu_thread = std::thread(CPUThreadMain);
+	s_session_cv.notify_all();
 	return true;
 }
 
@@ -911,7 +973,8 @@ void retro_unload_game(void)
 		return;
 
 	s_running.store(false, std::memory_order_release);
-	VMManager::SetState(VMState::Stopping);
+	if (VMManager::HasValidVM())
+		VMManager::SetState(VMState::Stopping);
 
 	// release the CPU thread if it's blocked waiting for a run token
 	{
@@ -920,7 +983,13 @@ void retro_unload_game(void)
 		s_frame_cv.notify_all();
 	}
 
-	s_cpu_thread.join();
+	// wait for the session to wind down; the CPU thread itself stays alive
+	// for the next retro_load_game
+	{
+		std::unique_lock lock(s_session_mutex);
+		s_session_cv.wait(lock, []() { return !s_session_active; });
+	}
+
 	s_audio_stream = nullptr;
 	GSSetFramebufferReadback(nullptr, 0, 0);
 	s_memory_map_sent = false;
