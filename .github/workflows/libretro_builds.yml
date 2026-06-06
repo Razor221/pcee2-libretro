@@ -125,7 +125,7 @@ jobs:
     name: "macOS x86_64"
     runs-on: macos-15
     continue-on-error: true
-    timeout-minutes: 180
+    timeout-minutes: 320
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
@@ -139,9 +139,9 @@ jobs:
             brew install ccache nasm
           fi
 
-      - name: Cache Dependencies
+      - name: Restore Dependencies Cache
         id: cache-deps
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/deps
           key: macos-libretro-deps ${{ hashFiles('.github/workflows/scripts/macos/*', '.github/workflows/scripts/common/*.patch') }}
@@ -150,9 +150,17 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: .github/workflows/scripts/macos/build-dependencies.sh "$HOME/deps"
 
+      # save immediately so a later timeout can't lose two hours of deps build
+      - name: Save Dependencies Cache
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/deps
+          key: macos-libretro-deps ${{ hashFiles('.github/workflows/scripts/macos/*', '.github/workflows/scripts/common/*.patch') }}
+
       - name: Generate CMake
         run: |
-          cmake -B build             -DCMAKE_PREFIX_PATH="$HOME/deps"             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_OSX_ARCHITECTURES="x86_64"             -DDISABLE_ADVANCE_SIMD=ON             -DUSE_LINKED_FFMPEG=ON             -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON             -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON
+          cmake -B build             -DCMAKE_PREFIX_PATH="$HOME/deps"             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_OSX_ARCHITECTURES="x86_64"             -DDISABLE_ADVANCE_SIMD=ON             -DUSE_LINKED_FFMPEG=ON                         -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON
 
       - name: Build Core
         run: cmake --build build --target pcsx2-libretro --parallel
