@@ -84,17 +84,24 @@ jobs:
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: deps
-          key: windows-libretro-deps ${{ hashFiles('.github/workflows/scripts/windows/build-dependencies.bat', '.github/workflows/scripts/common/*.patch') }}
+          key: windows-libretro-static-deps ${{ hashFiles('pcsx2-libretro/scripts/build-deps-windows.bat') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        env:
-          DEBUG: 0
-          BUILD_FFMPEG: 0
-        run: .github/workflows/scripts/windows/build-dependencies.bat
+        shell: cmd
+        run: |
+          call "%VCVARSPATH%" || exit /b
+          call pcsx2-libretro\scripts\build-deps-windows.bat %cd%\deps || exit /b
+
+      - name: Save Dependencies Cache
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: deps
+          key: windows-libretro-static-deps ${{ hashFiles('pcsx2-libretro/scripts/build-deps-windows.bat') }}
 
       - name: Generate CMake
         shell: cmd
@@ -114,15 +121,13 @@ jobs:
           mkdir artifact
           copy build\bin\pcee2_libretro.dll artifact\ || exit /b
           copy pcsx2-libretro\pcee2_libretro.info artifact\ || exit /b
-          mkdir artifact\place-next-to-retroarch-exe
-          for %%D in (SDL3 freetype jpeg62 libpng16 libsharpyuv libwebp lz4 plutosvg plutovg ryml shaderc_shared z zstd) do copy deps\bin\%%D.dll artifact\place-next-to-retroarch-exe\ || exit /b
+          copy deps\bin\shaderc_shared.dll artifact\ || exit /b
           (
             echo PCEE2 libretro core - Windows installation
             echo ============================================
-            echo 1. Copy pcee2_libretro.dll and pcee2_libretro.info into your RetroArch "cores" directory.
-            echo 2. Copy ALL .dll files from "place-next-to-retroarch-exe" into the directory that contains retroarch.exe.
-            echo    ^(Windows resolves a core's dependencies from the application directory, not the cores directory.^)
-            echo 3. Requires the Microsoft Visual C++ 2015-2022 Redistributable x64.
+            echo Copy everything into your RetroArch "cores" directory.
+            echo shaderc_shared.dll is loaded at runtime for the Vulkan renderer.
+            echo Requires the Microsoft Visual C++ 2015-2022 Redistributable x64.
           ) > artifact\README.txt
 
       - name: Upload Artifact
@@ -144,9 +149,9 @@ jobs:
 
       - name: Install Packages
         run: |
-          if ! brew install ccache nasm; then
+          if ! brew install ninja nasm; then
             brew update
-            brew install ccache nasm
+            brew install ninja nasm
           fi
 
       - name: Restore Dependencies Cache
@@ -154,23 +159,23 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/deps
-          key: macos-libretro-deps ${{ hashFiles('.github/workflows/scripts/macos/*', '.github/workflows/scripts/common/*.patch') }}
+          key: macos-libretro-static-deps ${{ hashFiles('pcsx2-libretro/scripts/build-deps-macos.sh') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        run: .github/workflows/scripts/macos/build-dependencies.sh "$HOME/deps"
+        run: bash pcsx2-libretro/scripts/build-deps-macos.sh "$HOME/deps"
 
-      # save immediately so a later timeout can't lose two hours of deps build
+      # save immediately so a later timeout can't lose the deps build
       - name: Save Dependencies Cache
         if: steps.cache-deps.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ~/deps
-          key: macos-libretro-deps ${{ hashFiles('.github/workflows/scripts/macos/*', '.github/workflows/scripts/common/*.patch') }}
+          key: macos-libretro-static-deps ${{ hashFiles('pcsx2-libretro/scripts/build-deps-macos.sh') }}
 
       - name: Generate CMake
         run: |
-          cmake -B build             -DCMAKE_PREFIX_PATH="$HOME/deps"             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_OSX_ARCHITECTURES="x86_64"             -DDISABLE_ADVANCE_SIMD=ON             -DUSE_LINKED_FFMPEG=ON                         -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON
+          cmake -B build             -DCMAKE_PREFIX_PATH="$HOME/deps"             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_OSX_ARCHITECTURES="x86_64"             -DDISABLE_ADVANCE_SIMD=ON                                     -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON
 
       - name: Build Core
         run: cmake --build build --target pcsx2-libretro --parallel
@@ -179,34 +184,21 @@ jobs:
         run: |
           mkdir artifact
           cp build/bin/pcee2_libretro.dylib pcsx2-libretro/pcee2_libretro.info artifact/
+          # runtime-dlopen'd libraries (found next to the core via DynamicLibrary)
+          cp "$HOME"/deps/lib/libshaderc_shared*.dylib "$HOME"/deps/lib/libMoltenVK.dylib artifact/ || true
           cd artifact
 
-          # Bundle the dependency dylibs (transitive closure) and rewrite all
-          # references to @loader_path so everything can live in cores/.
-          copied=1
-          while [ "$copied" -eq 1 ]; do
-            copied=0
-            for f in *.dylib; do
-              for dep in $(otool -L "$f" | awk '/\/Users\/runner\/deps\/lib/ {print $1}'); do
-                b=$(basename "$dep")
-                if [ ! -f "$b" ]; then
-                  cp "$dep" .
-                  chmod u+w "$b"
-                  copied=1
-                fi
-              done
-            done
-          done
+          # The core must be self-contained apart from the dlopen'd libs above;
+          # fail loudly if any deps-prefix install names leaked in.
+          if otool -L pcee2_libretro.dylib | grep -q "/Users/runner/deps"; then
+            echo "ERROR: core still references deps dylibs:" && otool -L pcee2_libretro.dylib
+            exit 1
+          fi
 
           for f in *.dylib; do
-            install_name_tool -id "@loader_path/$(basename "$f")" "$f" || true
-            for dep in $(otool -L "$f" | awk '/\/Users\/runner\/deps\/lib/ {print $1}'); do
-              install_name_tool -change "$dep" "@loader_path/$(basename "$dep")" "$f"
-            done
             codesign -f -s - "$f"
           done
-
-          echo "Bundled dylibs:" && ls *.dylib
+          ls -la
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
