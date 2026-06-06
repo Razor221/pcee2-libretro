@@ -216,9 +216,24 @@ namespace LibretroHost
 	static void RegisterCoreOptions();
 	static void ReadCoreOptions(bool startup);
 
-	static void LogCallback(const char* fmt_str, ...)
+	// Forward PCSX2's log to the frontend's log interface. Keeps Windows from
+	// popping up a console window, and the messages land in RetroArch's log.
+	static void HostLogCallback(LOGLEVEL level, ConsoleColors color, std::string_view message)
 	{
-		// placeholder; we rely on PCSX2's Console going to stdout for now
+		if (!s_log_cb)
+		{
+			std::fprintf(stderr, "%.*s\n", static_cast<int>(message.size()), message.data());
+			return;
+		}
+
+		retro_log_level rl = RETRO_LOG_INFO;
+		if (level == LOGLEVEL_ERROR)
+			rl = RETRO_LOG_ERROR;
+		else if (level == LOGLEVEL_WARNING)
+			rl = RETRO_LOG_WARN;
+		else if (level >= LOGLEVEL_DEV)
+			rl = RETRO_LOG_DEBUG;
+		s_log_cb(rl, "[PCSX2] %.*s\n", static_cast<int>(message.size()), message.data());
 	}
 } // namespace LibretroHost
 
@@ -346,7 +361,9 @@ void LibretroHost::SettingsOverride()
 	// v1: no audio output yet
 	s_settings_interface.SetStringValue("SPU2/Output", "OutputModule", "nullout");
 
-	s_settings_interface.SetBoolValue("Logging", "EnableSystemConsole", true);
+	// no system console: it would open a real console window on Windows; logs
+	// flow through the libretro log interface instead (see HostLogCallback)
+	s_settings_interface.SetBoolValue("Logging", "EnableSystemConsole", false);
 
 	// savestates go through retro_serialize as uncompressed zips; speed over
 	// size, the frontend can compress its state files itself
@@ -836,7 +853,7 @@ void retro_get_system_av_info(struct retro_system_av_info* info)
 void retro_init(void)
 {
 	CrashHandler::Install();
-	Log::SetConsoleOutputLevel(LOGLEVEL_INFO);
+	Log::SetHostOutputLevel(LOGLEVEL_INFO, &HostLogCallback);
 }
 
 void retro_deinit(void)
