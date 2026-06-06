@@ -134,6 +134,11 @@ namespace PageFaultHandler
 	HandlerResult HandlePageFault(void* exception_pc, void* fault_address, bool is_write);
 	bool Install(Error* error = nullptr);
 	bool InstallSecondaryThread();
+
+	/// Removes the process-wide handler again. Needed by dynamically unloaded
+	/// hosts (libretro cores), where a leftover handler would point into
+	/// unmapped code after dlclose. No-op when nothing is installed.
+	void Uninstall();
 } // namespace PageFaultHandler
 
 class SharedMemoryMappingArea

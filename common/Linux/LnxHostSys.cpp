@@ -317,10 +317,19 @@ void PageFaultHandler::SignalHandler(int sig, siginfo_t* info, void* ctx)
 	CrashHandler::CrashSignalHandler(sig, info, ctx);
 }
 
+static struct sigaction s_old_sigsegv;
+#ifdef ARCH_ARM64
+static struct sigaction s_old_sigbus;
+#endif
+
 bool PageFaultHandler::Install(Error* error)
 {
 	std::unique_lock lock(s_exception_handler_mutex);
-	pxAssertRel(!s_installed, "Page fault handler has already been installed.");
+
+	// The handler is process-wide and stateless; libretro frontends can cycle
+	// retro_deinit/retro_init in one process, making reinstallation a no-op.
+	if (s_installed)
+		return true;
 
 	struct sigaction sa;
 
@@ -328,7 +337,7 @@ bool PageFaultHandler::Install(Error* error)
 	sa.sa_flags = SA_SIGINFO | SA_NODEFER;
 	sa.sa_sigaction = SignalHandler;
 
-	if (sigaction(SIGSEGV, &sa, nullptr) != 0)
+	if (sigaction(SIGSEGV, &sa, &s_old_sigsegv) != 0)
 	{
 		Error::SetErrno(error, "sigaction() for SIGSEGV failed: ", errno);
 		return false;
@@ -336,7 +345,7 @@ bool PageFaultHandler::Install(Error* error)
 
 #ifdef ARCH_ARM64
 	// We can get SIGBUS on ARM64.
-	if (sigaction(SIGBUS, &sa, nullptr) != 0)
+	if (sigaction(SIGBUS, &sa, &s_old_sigbus) != 0)
 	{
 		Error::SetErrno(error, "sigaction() for SIGBUS failed: ", errno);
 		return false;
@@ -345,6 +354,19 @@ bool PageFaultHandler::Install(Error* error)
 
 	s_installed = true;
 	return true;
+}
+
+void PageFaultHandler::Uninstall()
+{
+	std::unique_lock lock(s_exception_handler_mutex);
+	if (!s_installed)
+		return;
+
+	sigaction(SIGSEGV, &s_old_sigsegv, nullptr);
+#ifdef ARCH_ARM64
+	sigaction(SIGBUS, &s_old_sigbus, nullptr);
+#endif
+	s_installed = false;
 }
 
 bool PageFaultHandler::InstallSecondaryThread() { return true; }

@@ -30,6 +30,7 @@
 #include "common/Console.h"
 #include "common/CrashHandler.h"
 #include "common/Error.h"
+#include "common/HostSys.h"
 #include "common/FileSystem.h"
 #include "common/MemorySettingsInterface.h"
 #include "common/Path.h"
@@ -90,6 +91,8 @@ namespace LibretroHost
 	static bool s_boot_requested = false;
 	static bool s_exit_requested = false;
 	static bool s_session_active = false;
+	static bool s_core_initialized = false;
+	static bool s_core_init_result = false;
 
 	// frame pacing: retro_run() posts a run token, CPU thread posts frame-done
 	static std::mutex s_frame_mutex;
@@ -246,6 +249,28 @@ namespace LibretroHost
 } // namespace LibretroHost
 
 using namespace LibretroHost;
+
+// Tears the core down when the process exits or the library is unloaded:
+// stops the persistent CPU thread (running VMManager's CPU-thread shutdown on
+// it), and removes the process-wide page fault handler. Registered via
+// atexit() from retro_init, which makes it run BEFORE any of this library's
+// static destructors (atexit/destructor handlers execute in reverse
+// registration order, and retro_init runs after all static initializers) —
+// MTGS's global thread object asserts if it's still alive at destruction.
+static void ShutdownCoreAtExit()
+{
+	if (s_cpu_thread.joinable())
+	{
+		{
+			std::unique_lock lock(s_session_mutex);
+			s_exit_requested = true;
+		}
+		s_session_cv.notify_all();
+		s_cpu_thread.join();
+	}
+
+	PageFaultHandler::Uninstall();
+}
 
 //////////////////////////////////////////////////////////////////////////
 // Config / boot
@@ -775,9 +800,18 @@ void LibretroHost::CPUThreadMain()
 {
 	s_cpu_thread_id = std::this_thread::get_id();
 
-	const bool init_ok = VMManager::Internal::CPUThreadInitialize();
-	if (!init_ok)
-		Console.Error("CPUThreadInitialize() failed.");
+	// PCSX2's process-level state (page fault handler, JIT memory, COM, ...)
+	// supports exactly one initialization per process; frontends may cycle
+	// retro_deinit/retro_init, so initialize once and never tear down (the Qt
+	// frontend has the same lifetime model).
+	if (!s_core_initialized)
+	{
+		s_core_init_result = VMManager::Internal::CPUThreadInitialize();
+		s_core_initialized = true;
+		if (!s_core_init_result)
+			Console.Error("CPUThreadInitialize() failed.");
+	}
+	const bool init_ok = s_core_init_result;
 
 	for (;;)
 	{
@@ -825,7 +859,8 @@ void LibretroHost::CPUThreadMain()
 		s_session_cv.notify_all();
 	}
 
-	VMManager::Internal::CPUThreadShutdown();
+	if (s_core_init_result)
+		VMManager::Internal::CPUThreadShutdown();
 }
 
 void LibretroHost::DrainCPUWork()
@@ -897,22 +932,26 @@ void retro_get_system_av_info(struct retro_system_av_info* info)
 
 void retro_init(void)
 {
-	CrashHandler::Install();
+	// Frontends cycle retro_deinit/retro_init; a second CrashHandler::Install
+	// would re-grab the SIGSEGV handler installed by the page fault handler
+	// and break the recompiler's fastmem fault handling.
+	static bool s_crash_handler_installed = false;
+	if (!s_crash_handler_installed)
+	{
+		CrashHandler::Install();
+		std::atexit(&ShutdownCoreAtExit);
+		s_crash_handler_installed = true;
+	}
+
 	Log::SetHostOutputLevel(LOGLEVEL_INFO, &HostLogCallback);
 }
 
 void retro_deinit(void)
 {
-	if (s_cpu_thread.joinable())
-	{
-		{
-			std::unique_lock lock(s_session_mutex);
-			s_exit_requested = true;
-		}
-		s_session_cv.notify_all();
-		s_cpu_thread.join();
-		s_exit_requested = false;
-	}
+	// Deliberately keep the CPU thread parked: the EE recompiler's state is
+	// affine to the thread it first ran on, so a deinit/init cycle (which
+	// RetroArch performs between contents) must reuse it. The thread is
+	// stopped by the library janitor when the core is actually unloaded.
 }
 
 bool retro_load_game(const struct retro_game_info* game)
