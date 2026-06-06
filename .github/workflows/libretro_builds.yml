@@ -48,7 +48,6 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
             -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON \
-            -DSHADERC_STATIC=ON "-DSHADERC_LIBRARY=$HOME/deps/lib/libshaderc_combined.a" \
             -DCMAKE_PREFIX_PATH="$PWD/deps" \
             -DSHADERC_STATIC=ON \
             -DSHADERC_LIBRARY=/usr/lib/x86_64-linux-gnu/libshaderc_combined.a \
@@ -175,7 +174,13 @@ jobs:
 
       - name: Generate CMake
         run: |
-          cmake -B build             -DCMAKE_PREFIX_PATH="$HOME/deps"             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_OSX_ARCHITECTURES="x86_64"             -DDISABLE_ADVANCE_SIMD=ON                                     -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON
+          cmake -B build \
+            -DCMAKE_PREFIX_PATH="$HOME/deps" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64" \
+            -DDISABLE_ADVANCE_SIMD=ON \
+            -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON \
+            -DSHADERC_STATIC=ON "-DSHADERC_LIBRARY=$HOME/deps/lib/libshaderc_combined.a"
 
       - name: Build Core
         run: cmake --build build --target pcsx2-libretro --parallel
