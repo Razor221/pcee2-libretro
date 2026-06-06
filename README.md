@@ -1,5 +1,8 @@
 # PCEE2 — PCSX2 libretro core
 
+![Libretro Core Builds](https://img.shields.io/github/actions/workflow/status/WizzardSK/pcee2-libretro/libretro_builds.yml?branch=libretro&label=core%20builds)
+[![Latest Release](https://img.shields.io/github/v/release/WizzardSK/pcee2-libretro)](https://github.com/WizzardSK/pcee2-libretro/releases/latest)
+
 A [libretro](https://www.libretro.com/) core frontend for the current PCSX2
 codebase, letting RetroArch (and other libretro frontends) run PS2 games with
 an up-to-date emulation core.
@@ -25,16 +28,26 @@ This project is not affiliated with or endorsed by the PCSX2 team.
 | PAL (50 Hz) / NTSC av_info | ✅ working |
 | Fast-forward | ✅ working |
 | OpenGL renderer | ✅ working (surfaceless EGL) |
-| D3D / Metal renderers | ❌ Windows/macOS untested |
+| D3D11 / D3D12 renderers | ⚠️ in the Windows build, untested |
+| Metal renderer | ❌ needs a macOS build |
 | RetroAchievements | ✅ via RetroArch (EE RAM exposed; log in to RetroAchievements in RetroArch settings) |
 | Multitap (up to 8 controllers) | ✅ core option |
 | Lightgun (GunCon 2 via USB) | ✅ core option, aimed by frontend lightgun/mouse |
 | Other USB devices (wheels, mic, EyeToy) | ❌ not wired up |
-| Windows / macOS builds | ❌ untested |
+| Windows x64 build (MSVC, via CI) | ⚠️ compiles + links, untested — feedback welcome |
+| macOS build | ❌ not attempted |
 
 Output is a per-frame GPU readback (double-buffered on the GS thread, one
 frame of latency). A zero-copy path via libretro Vulkan context negotiation
 may come later.
+
+## Download
+
+Grab the latest core from the [Releases page](https://github.com/WizzardSK/pcee2-libretro/releases)
+(Linux x86_64 `.so`, Windows x64 `.dll`) and copy it together with
+`pcee2_libretro.info` into your RetroArch `cores` directory. Per-commit builds
+are available as artifacts of the [Libretro Core Builds](https://github.com/WizzardSK/pcee2-libretro/actions/workflows/libretro_builds.yml)
+workflow.
 
 ## Setup
 
@@ -55,9 +68,8 @@ sudo apt install -y cmake ninja-build clang liblz4-dev libwebp-dev libsdl3-dev \
   libshaderc-dev libcurl4-openssl-dev libpcap-dev libfontconfig-dev libudev-dev \
   libx11-dev libxrandr-dev extra-cmake-modules libwayland-dev libegl-dev libdbus-1-dev
 
-# small deps not packaged by distros: plutovg, plutosvg, rapidyaml, libbacktrace
-# build them into ./deps (static, PIC) — see deps-src/ recipes or upstream's
-# .github/workflows/scripts/linux/build-dependencies-qt.sh for versions
+# deps not packaged by distros (SDL3, plutovg, plutosvg, rapidyaml, libbacktrace):
+bash pcsx2-libretro/scripts/build-deps-linux.sh "$PWD/deps"
 
 cmake -B build-libretro -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
@@ -67,6 +79,9 @@ cmake -B build-libretro -G Ninja -DCMAKE_BUILD_TYPE=Release \
 ninja -C build-libretro pcsx2-libretro
 # -> build-libretro/bin/pcee2_libretro.so
 ```
+
+Windows builds use MSVC + Ninja with upstream's dependency script — see
+`.github/workflows/libretro_builds.yml` for the exact steps on both platforms.
 
 ## Core options
 
