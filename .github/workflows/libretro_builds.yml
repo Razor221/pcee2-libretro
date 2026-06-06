@@ -179,6 +179,34 @@ jobs:
         run: |
           mkdir artifact
           cp build/bin/pcee2_libretro.dylib pcsx2-libretro/pcee2_libretro.info artifact/
+          cd artifact
+
+          # Bundle the dependency dylibs (transitive closure) and rewrite all
+          # references to @loader_path so everything can live in cores/.
+          copied=1
+          while [ "$copied" -eq 1 ]; do
+            copied=0
+            for f in *.dylib; do
+              for dep in $(otool -L "$f" | awk '/\/Users\/runner\/deps\/lib/ {print $1}'); do
+                b=$(basename "$dep")
+                if [ ! -f "$b" ]; then
+                  cp "$dep" .
+                  chmod u+w "$b"
+                  copied=1
+                fi
+              done
+            done
+          done
+
+          for f in *.dylib; do
+            install_name_tool -id "@loader_path/$(basename "$f")" "$f" || true
+            for dep in $(otool -L "$f" | awk '/\/Users\/runner\/deps\/lib/ {print $1}'); do
+              install_name_tool -change "$dep" "@loader_path/$(basename "$dep")" "$f"
+            done
+            codesign -f -s - "$f"
+          done
+
+          echo "Bundled dylibs:" && ls *.dylib
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
