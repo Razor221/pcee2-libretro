@@ -121,10 +121,57 @@ jobs:
           name: pcee2_libretro-windows-x64
           path: artifact/*
 
+  build_macos:
+    name: "macOS x86_64"
+    runs-on: macos-15
+    continue-on-error: true
+    timeout-minutes: 180
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Packages
+        run: |
+          if ! brew install ccache nasm; then
+            brew update
+            brew install ccache nasm
+          fi
+
+      - name: Cache Dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: ~/deps
+          key: macos-libretro-deps ${{ hashFiles('.github/workflows/scripts/macos/*', '.github/workflows/scripts/common/*.patch') }}
+
+      - name: Build Dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: .github/workflows/scripts/macos/build-dependencies.sh "$HOME/deps"
+
+      - name: Generate CMake
+        run: |
+          cmake -B build             -DCMAKE_PREFIX_PATH="$HOME/deps"             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_OSX_ARCHITECTURES="x86_64"             -DDISABLE_ADVANCE_SIMD=ON             -DUSE_LINKED_FFMPEG=ON             -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON             -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON
+
+      - name: Build Core
+        run: cmake --build build --target pcsx2-libretro --parallel
+
+      - name: Prepare Artifact
+        run: |
+          mkdir artifact
+          cp build/bin/pcee2_libretro.dylib pcsx2-libretro/pcee2_libretro.info artifact/
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pcee2_libretro-macos-x86_64
+          path: artifact/*
+
   release:
     name: "Attach Release Assets"
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build_linux, build_windows]
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && needs.build_linux.result == 'success' && needs.build_windows.result == 'success' }}
+    needs: [build_linux, build_windows, build_macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -137,12 +184,11 @@ jobs:
       - name: Package
         run: |
           cd artifacts
-          (cd pcee2_libretro-linux-x86_64 && zip -9 ../pcee2_libretro-linux-x86_64.zip *)
-          (cd pcee2_libretro-windows-x64 && zip -9 ../pcee2_libretro-windows-x64.zip *)
+          for dir in pcee2_libretro-*; do
+            [ -d "$dir" ] && (cd "$dir" && zip -9 "../$dir.zip" *)
+          done
 
       - name: Attach to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/pcee2_libretro-linux-x86_64.zip
-            artifacts/pcee2_libretro-windows-x64.zip
+          files: artifacts/pcee2_libretro-*.zip
