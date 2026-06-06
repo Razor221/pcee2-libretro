@@ -134,6 +134,26 @@ namespace dyn_shaderc
 
 bool dyn_shaderc::Open()
 {
+#ifdef PCSX2_STATIC_SHADERC
+	// statically linked: bind the function table straight to the symbols
+	if (s_compiler)
+		return true;
+
+#define BIND_FUNC(F) F = &::F;
+	SHADERC_FUNCTIONS(BIND_FUNC)
+#undef BIND_FUNC
+
+	s_compiler = shaderc_compiler_initialize();
+	if (!s_compiler)
+	{
+		ERROR_LOG("shaderc_compiler_initialize() failed");
+		Close();
+		return false;
+	}
+
+	std::atexit(&dyn_shaderc::Close);
+	return true;
+#else
 	if (s_library.IsOpen())
 		return true;
 
@@ -184,6 +204,7 @@ bool dyn_shaderc::Open()
 
 	std::atexit(&dyn_shaderc::Close);
 	return true;
+#endif
 }
 
 void dyn_shaderc::Close()

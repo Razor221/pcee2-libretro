@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds static x86_64 dependencies for the PCEE2 libretro core into $1.
-# Only shaderc (dlopen'd at runtime) and MoltenVK (prebuilt, dlopen'd Vulkan
-# driver) end up as dylibs.
+# Everything is static except MoltenVK (prebuilt, dlopen'd Vulkan
+# driver), the only dylib.
 set -e
 
 if [ "$#" -ne 1 ]; then
@@ -79,15 +79,16 @@ build plutosvg -DPLUTOSVG_ENABLE_FREETYPE=ON -DPLUTOSVG_BUILD_EXAMPLES=OFF
 clone biojppm/rapidyaml rapidyaml "$RAPIDYAML" --recursive
 build rapidyaml
 
-# shaderc: shared on purpose (dlopen'd by the Vulkan shader cache)
+# shaderc: static combined, linked straight into the core
 clone google/shaderc shaderc "$SHADERC"
 (cd shaderc && python3 utils/git-sync-deps)
 cmake -S shaderc -B shaderc/b -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$PREFIX" \
 	-DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_OSX_ARCHITECTURES=x86_64 -G Ninja \
 	-DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DSHADERC_SKIP_COPYRIGHT_CHECK=ON
-cmake --build shaderc/b --parallel "$NPROCS" --target shaderc_shared
-mkdir -p "$PREFIX/lib"
-cp shaderc/b/libshaderc/libshaderc_shared*.dylib "$PREFIX/lib/"
+cmake --build shaderc/b --parallel "$NPROCS" --target shaderc_combined
+mkdir -p "$PREFIX/lib" "$PREFIX/include"
+cp shaderc/b/libshaderc/libshaderc_combined.a "$PREFIX/lib/"
+cp -r shaderc/libshaderc/include/shaderc "$PREFIX/include/"
 
 # MoltenVK: prebuilt release (dlopen'd Vulkan implementation)
 curl -L -o moltenvk.tar "https://github.com/KhronosGroup/MoltenVK/releases/download/$MOLTENVK/MoltenVK-macos.tar"

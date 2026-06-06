@@ -1,7 +1,7 @@
 @echo off
 rem Builds static dependencies for the PCEE2 libretro core into %1.
 rem Run from a VS x64 developer prompt (cl/ninja/cmake on PATH).
-rem Only shaderc is built shared - PCSX2 dlopens it at runtime by design.
+rem All libraries including shaderc_combined are built static.
 setlocal enabledelayedexpansion
 
 if "%~1"=="" (
@@ -92,14 +92,15 @@ if not exist rapidyaml git clone --depth 1 -b %RAPIDYAML% --recursive https://gi
 cmake -S rapidyaml -B rapidyaml\b %COMMON% || exit /b 1
 cmake --build rapidyaml\b --target install || exit /b 1
 
-echo === shaderc %SHADERC% (shared, dlopen'd at runtime) ===
+echo === shaderc %SHADERC% (static combined, linked into the core) ===
 if not exist shaderc git clone --depth 1 -b %SHADERC% https://github.com/google/shaderc || exit /b 1
 cd shaderc
 python utils\git-sync-deps || exit /b 1
 cd ..
 cmake -S shaderc -B shaderc\b -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=%INSTALLDIR% -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -G Ninja -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DSHADERC_SKIP_COPYRIGHT_CHECK=ON -DSHADERC_ENABLE_SHARED_CRT=ON || exit /b 1
-cmake --build shaderc\b --target shaderc_shared || exit /b 1
-copy /y shaderc\b\libshaderc\shaderc_shared.dll "%INSTALLDIR%\bin\shaderc_shared.dll" || exit /b 1
+cmake --build shaderc\b --target shaderc_combined || exit /b 1
+copy /y shaderc\b\libshaderc\shaderc_combined.lib "%INSTALLDIR%\lib\shaderc_combined.lib" || exit /b 1
+xcopy /e /i /y shaderc\libshaderc\include\shaderc "%INSTALLDIR%\include\shaderc" || exit /b 1
 
 echo Dependencies installed to %INSTALLDIR%
 exit /b 0
