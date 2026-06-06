@@ -29,13 +29,14 @@ This project is not affiliated with or endorsed by the PCSX2 team.
 | Fast-forward | ✅ working |
 | OpenGL renderer | ✅ working (surfaceless EGL) |
 | D3D11 / D3D12 renderers | ⚠️ in the Windows build, untested |
-| Metal renderer | ❌ needs a macOS build |
+| Metal renderer | ⚠️ in the macOS build, untested (Vulkan via MoltenVK is the default) |
 | RetroAchievements | ✅ via RetroArch (EE RAM exposed; log in to RetroAchievements in RetroArch settings) |
 | Multitap (up to 8 controllers) | ✅ core option |
 | Lightgun (GunCon 2 via USB) | ✅ core option, aimed by frontend lightgun/mouse |
 | Other USB devices (wheels, mic, EyeToy) | ❌ not wired up |
-| Windows x64 build (MSVC, via CI) | ⚠️ compiles + links, untested — feedback welcome |
-| macOS build | ❌ not attempted |
+| Content reload / Close Content | ✅ core survives RetroArch's deinit/init cycles |
+| Windows x64 build (MSVC, via CI) | ✅ community-tested (WRC 4, GTA SA, Killzone on Vulkan) |
+| macOS x86_64 build (via CI) | ⚠️ compiles + links, untested — feedback welcome |
 
 Output is a per-frame GPU readback (double-buffered on the GS thread, one
 frame of latency). A zero-copy path via libretro Vulkan context negotiation
@@ -44,9 +45,14 @@ may come later.
 ## Download
 
 Grab the latest core from the [Releases page](https://github.com/WizzardSK/pcee2-libretro/releases)
-(Linux x86_64 `.so`, Windows x64 `.dll`) and copy it together with
-`pcee2_libretro.info` into your RetroArch `cores` directory. Per-commit builds
-are available as artifacts of the [Libretro Core Builds](https://github.com/WizzardSK/pcee2-libretro/actions/workflows/libretro_builds.yml)
+and copy everything in the zip into your RetroArch `cores` directory. The
+cores are statically linked single files (Linux `.so`, Windows `.dll`); macOS
+additionally ships `libMoltenVK.dylib` (the Vulkan driver) next to the core,
+and needs the quarantine flag cleared once:
+`xattr -cr ~/Library/Application\ Support/RetroArch/cores`.
+
+Per-commit builds are available as artifacts of the
+[Libretro Core Builds](https://github.com/WizzardSK/pcee2-libretro/actions/workflows/libretro_builds.yml)
 workflow.
 
 ## Setup
@@ -64,24 +70,26 @@ Memory cards, savestates metadata, cache, etc. live under
 
 ```sh
 # distro packages (Ubuntu/KDE neon)
-sudo apt install -y cmake ninja-build clang liblz4-dev libwebp-dev libsdl3-dev \
-  libshaderc-dev libcurl4-openssl-dev libpcap-dev libfontconfig-dev libudev-dev \
+sudo apt install -y cmake ninja-build clang liblz4-dev libwebp-dev \
+  libcurl4-openssl-dev libpcap-dev libfontconfig-dev libudev-dev \
   libx11-dev libxrandr-dev extra-cmake-modules libwayland-dev libegl-dev libdbus-1-dev
 
-# deps not packaged by distros (SDL3, plutovg, plutosvg, rapidyaml, libbacktrace):
+# deps not packaged usably by distros (SDL3, plutovg, plutosvg, rapidyaml,
+# libbacktrace, shaderc — Ubuntu's libshaderc_combined.a is not self-contained):
 bash pcee2-libretro/scripts/build-deps-linux.sh "$PWD/deps"
 
 cmake -B build-libretro -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
   -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON \
   -DCMAKE_PREFIX_PATH=$PWD/deps \
-  -DSHADERC_LIBRARY=/usr/lib/x86_64-linux-gnu/libshaderc.so.1
+  -DSHADERC_STATIC=ON -DSHADERC_LIBRARY=$PWD/deps/lib/libshaderc_combined.a
 ninja -C build-libretro pcee2-libretro
 # -> build-libretro/bin/pcee2_libretro.so
 ```
 
-Windows builds use MSVC + Ninja with upstream's dependency script — see
-`.github/workflows/libretro_builds.yml` for the exact steps on both platforms.
+Windows (MSVC) and macOS use the matching static dependency scripts in
+`pcee2-libretro/scripts/` — see `.github/workflows/libretro_builds.yml` for
+the exact steps on all three platforms.
 
 ## Core options
 
@@ -126,6 +134,10 @@ automatic per-game fixes from the GameDB).
   `SPU2::CustomOutputStreamFactory`.
 - Savestates use `SaveState_ZipToBuffer`/`SaveState_UnzipFromBuffer`
   (in-memory variants of the existing zip paths).
+- The CPU thread and PCSX2's process-level state (signal handlers, JIT
+  memory) live for the whole core lifetime and are reused across
+  RetroArch's deinit/init content cycles, mirroring the Qt frontend's
+  lifetime model.
 - Core modifications beyond these hooks are intentionally minimal; see
   `git log --oneline upstream/master..libretro -- pcsx2/ common/` for the
   full delta.
