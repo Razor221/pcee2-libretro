@@ -57,4 +57,19 @@ cmake --install rapidyaml/build
 clone https://github.com/ianlancetaylor/libbacktrace libbacktrace master
 (cd libbacktrace && ./configure --prefix="$PREFIX" --with-pic && make -j"$NPROCS" && make install)
 
+# shaderc: static combined, linked straight into the core. Distro
+# libshaderc_combined.a packages aren't actually self-contained (Ubuntu's
+# expects the system glslang), so build the real thing from source.
+SHADERC=v2026.2
+clone https://github.com/google/shaderc shaderc "$SHADERC"
+(cd shaderc && python3 utils/git-sync-deps)
+cmake -S shaderc -B shaderc/b -G Ninja -DCMAKE_BUILD_TYPE=Release \
+	-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+	-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+	-DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DSHADERC_SKIP_COPYRIGHT_CHECK=ON
+cmake --build shaderc/b --parallel "$NPROCS" --target shaderc_combined
+mkdir -p "$PREFIX/lib" "$PREFIX/include"
+cp shaderc/b/libshaderc/libshaderc_combined.a "$PREFIX/lib/"
+cp -r shaderc/libshaderc/include/shaderc "$PREFIX/include/"
+
 echo "Dependencies installed to $PREFIX"

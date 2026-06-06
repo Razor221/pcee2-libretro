@@ -50,7 +50,7 @@ jobs:
             -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON \
             -DCMAKE_PREFIX_PATH="$PWD/deps" \
             -DSHADERC_STATIC=ON \
-            -DSHADERC_LIBRARY=/usr/lib/x86_64-linux-gnu/libshaderc_combined.a \
+            "-DSHADERC_LIBRARY=$PWD/deps/lib/libshaderc_combined.a" \
             -DDISABLE_ADVANCE_SIMD=ON
 
       - name: Build Core

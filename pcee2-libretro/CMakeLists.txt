@@ -28,3 +28,9 @@ target_link_libraries(pcee2-libretro PRIVATE
 	PCSX2_FLAGS
 	PCSX2
 )
+
+# undefined symbols in a core otherwise surface only when the frontend loads
+# it ("symbol lookup error" at runtime) - fail the link instead
+if(UNIX AND NOT APPLE)
+	target_link_options(pcee2-libretro PRIVATE "-Wl,--no-undefined")
+endif()
