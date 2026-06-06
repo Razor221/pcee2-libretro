@@ -115,7 +115,7 @@ jobs:
           copy build\bin\pcee2_libretro.dll artifact\ || exit /b
           copy pcsx2-libretro\pcee2_libretro.info artifact\ || exit /b
           mkdir artifact\place-next-to-retroarch-exe
-          copy deps\bin\*.dll artifact\place-next-to-retroarch-exe\ || exit /b
+          for %%D in (SDL3 freetype jpeg62 libpng16 libsharpyuv libwebp lz4 plutosvg plutovg ryml shaderc_shared z zstd) do copy deps\bin\%%D.dll artifact\place-next-to-retroarch-exe\ || exit /b
           (
             echo PCEE2 libretro core - Windows installation
             echo ============================================
