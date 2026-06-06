@@ -36,11 +36,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: deps
-          key: linux-libretro-deps ${{ hashFiles('pcsx2-libretro/scripts/build-deps-linux.sh') }}
+          key: linux-libretro-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        run: bash pcsx2-libretro/scripts/build-deps-linux.sh "$PWD/deps"
+        run: bash pcee2-libretro/scripts/build-deps-linux.sh "$PWD/deps"
 
       - name: Generate CMake
         run: |
@@ -54,12 +54,12 @@ jobs:
             -DDISABLE_ADVANCE_SIMD=ON
 
       - name: Build Core
-        run: cmake --build build --target pcsx2-libretro
+        run: cmake --build build --target pcee2-libretro
 
       - name: Prepare Artifact
         run: |
           mkdir artifact
-          cp build/bin/pcee2_libretro.so pcsx2-libretro/pcee2_libretro.info artifact/
+          cp build/bin/pcee2_libretro.so pcee2-libretro/pcee2_libretro.info artifact/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -88,21 +88,21 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: deps
-          key: windows-libretro-static-deps ${{ hashFiles('pcsx2-libretro/scripts/build-deps-windows.bat') }}
+          key: windows-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-windows.bat') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           call "%VCVARSPATH%" || exit /b
-          call pcsx2-libretro\scripts\build-deps-windows.bat %cd%\deps || exit /b
+          call pcee2-libretro\scripts\build-deps-windows.bat %cd%\deps || exit /b
 
       - name: Save Dependencies Cache
         if: steps.cache-deps.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: deps
-          key: windows-libretro-static-deps ${{ hashFiles('pcsx2-libretro/scripts/build-deps-windows.bat') }}
+          key: windows-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-windows.bat') }}
 
       - name: Generate CMake
         shell: cmd
@@ -114,14 +114,14 @@ jobs:
         shell: cmd
         run: |
           call "%VCVARSPATH%" || exit /b
-          cmake --build build --target pcsx2-libretro || exit /b
+          cmake --build build --target pcee2-libretro || exit /b
 
       - name: Prepare Artifact
         shell: cmd
         run: |
           mkdir artifact
           copy build\bin\pcee2_libretro.dll artifact\ || exit /b
-          copy pcsx2-libretro\pcee2_libretro.info artifact\ || exit /b
+          copy pcee2-libretro\pcee2_libretro.info artifact\ || exit /b
           (
             echo PCEE2 libretro core - Windows installation
             echo ============================================
@@ -158,11 +158,11 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/deps
-          key: macos-libretro-static-deps ${{ hashFiles('pcsx2-libretro/scripts/build-deps-macos.sh') }}
+          key: macos-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        run: bash pcsx2-libretro/scripts/build-deps-macos.sh "$HOME/deps"
+        run: bash pcee2-libretro/scripts/build-deps-macos.sh "$HOME/deps"
 
       # save immediately so a later timeout can't lose the deps build
       - name: Save Dependencies Cache
@@ -170,7 +170,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/deps
-          key: macos-libretro-static-deps ${{ hashFiles('pcsx2-libretro/scripts/build-deps-macos.sh') }}
+          key: macos-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh') }}
 
       - name: Generate CMake
         run: |
@@ -183,12 +183,12 @@ jobs:
             -DSHADERC_STATIC=ON "-DSHADERC_LIBRARY=$HOME/deps/lib/libshaderc_combined.a"
 
       - name: Build Core
-        run: cmake --build build --target pcsx2-libretro --parallel
+        run: cmake --build build --target pcee2-libretro --parallel
 
       - name: Prepare Artifact
         run: |
           mkdir artifact
-          cp build/bin/pcee2_libretro.dylib pcsx2-libretro/pcee2_libretro.info artifact/
+          cp build/bin/pcee2_libretro.dylib pcee2-libretro/pcee2_libretro.info artifact/
           # runtime-dlopen'd Vulkan driver (found next to the core via DynamicLibrary)
           cp "$HOME"/deps/lib/libMoltenVK.dylib artifact/
           cd artifact

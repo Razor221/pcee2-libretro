@@ -72,7 +72,7 @@ endif()
 
 # libretro core
 if(ENABLE_LIBRETRO)
-	add_subdirectory(pcsx2-libretro)
+	add_subdirectory(pcee2-libretro)
 endif()
 
 #-------------------------------------------------------------------------------

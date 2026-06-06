@@ -69,14 +69,14 @@ sudo apt install -y cmake ninja-build clang liblz4-dev libwebp-dev libsdl3-dev \
   libx11-dev libxrandr-dev extra-cmake-modules libwayland-dev libegl-dev libdbus-1-dev
 
 # deps not packaged by distros (SDL3, plutovg, plutosvg, rapidyaml, libbacktrace):
-bash pcsx2-libretro/scripts/build-deps-linux.sh "$PWD/deps"
+bash pcee2-libretro/scripts/build-deps-linux.sh "$PWD/deps"
 
 cmake -B build-libretro -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
   -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON \
   -DCMAKE_PREFIX_PATH=$PWD/deps \
   -DSHADERC_LIBRARY=/usr/lib/x86_64-linux-gnu/libshaderc.so.1
-ninja -C build-libretro pcsx2-libretro
+ninja -C build-libretro pcee2-libretro
 # -> build-libretro/bin/pcee2_libretro.so
 ```
 
@@ -117,7 +117,7 @@ automatic per-game fixes from the GameDB).
 
 ## Architecture notes
 
-- The frontend (`pcsx2-libretro/Libretro.cpp`) is modeled on `pcsx2-gsrunner`:
+- The frontend (`pcee2-libretro/Libretro.cpp`) is modeled on `pcsx2-gsrunner`:
   a dedicated CPU thread runs the `VMManager::Execute()` loop, and
   `Host::PumpMessagesOnCPUThread()` paces it 1:1 against `retro_run()`.
 - Frames arrive through `GSSetFramebufferReadback()` — a double-buffered
