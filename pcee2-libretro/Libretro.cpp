@@ -91,8 +91,6 @@ namespace LibretroHost
 	static bool s_boot_requested = false;
 	static bool s_exit_requested = false;
 	static bool s_session_active = false;
-	static bool s_core_initialized = false;
-	static bool s_core_init_result = false;
 
 	// frame pacing: retro_run() posts a run token, CPU thread posts frame-done
 	static std::mutex s_frame_mutex;
@@ -800,18 +798,9 @@ void LibretroHost::CPUThreadMain()
 {
 	s_cpu_thread_id = std::this_thread::get_id();
 
-	// PCSX2's process-level state (page fault handler, JIT memory, COM, ...)
-	// supports exactly one initialization per process; frontends may cycle
-	// retro_deinit/retro_init, so initialize once and never tear down (the Qt
-	// frontend has the same lifetime model).
-	if (!s_core_initialized)
-	{
-		s_core_init_result = VMManager::Internal::CPUThreadInitialize();
-		s_core_initialized = true;
-		if (!s_core_init_result)
-			Console.Error("CPUThreadInitialize() failed.");
-	}
-	const bool init_ok = s_core_init_result;
+	const bool init_ok = VMManager::Internal::CPUThreadInitialize();
+	if (!init_ok)
+		Console.Error("CPUThreadInitialize() failed.");
 
 	for (;;)
 	{
@@ -859,7 +848,7 @@ void LibretroHost::CPUThreadMain()
 		s_session_cv.notify_all();
 	}
 
-	if (s_core_init_result)
+	if (init_ok)
 		VMManager::Internal::CPUThreadShutdown();
 }
 
@@ -948,10 +937,24 @@ void retro_init(void)
 
 void retro_deinit(void)
 {
-	// Deliberately keep the CPU thread parked: the EE recompiler's state is
-	// affine to the thread it first ran on, so a deinit/init cycle (which
-	// RetroArch performs between contents) must reuse it. The thread is
-	// stopped by the library janitor when the core is actually unloaded.
+	// Stop the CPU thread completely: leaving anything running past deinit
+	// breaks the frontend's process teardown on Windows (threads are killed
+	// before DLL atexit handlers run, deadlocking joins under the loader
+	// lock). The idempotent signal-handler installs make the next
+	// retro_init/load cycle safe again.
+	if (s_cpu_thread.joinable())
+	{
+		{
+			std::unique_lock lock(s_session_mutex);
+			s_exit_requested = true;
+		}
+		s_session_cv.notify_all();
+		s_cpu_thread.join();
+		{
+			std::unique_lock lock(s_session_mutex);
+			s_exit_requested = false;
+		}
+	}
 }
 
 bool retro_load_game(const struct retro_game_info* game)
