@@ -59,7 +59,7 @@ Please note that a BIOS dump from a legitimately-owned PS2 console is required t
 | Requirement | Notes |
 |---|---|
 | macOS 12+ | Monterey or later |
-| Apple Silicon (M1/M2/M3/M4) | Native ARM64 JIT; Rosetta 2 not required |
+| Apple Silicon (M1/M2/M3/M4/M5) | Native ARM64 JIT; Rosetta 2 not required |
 | 8 GB RAM minimum | 16 GB recommended for heavier titles |
 | BIOS | Same requirement as x86-64 builds |
 
