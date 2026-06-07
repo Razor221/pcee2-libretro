@@ -174,7 +174,7 @@ jobs:
 
       - name: Generate CMake
         run: |
-          cmake -B build \
+          cmake -B build -G Ninja \
             -DCMAKE_PREFIX_PATH="$HOME/deps" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES="x86_64" \
