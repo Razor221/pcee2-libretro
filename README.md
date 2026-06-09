@@ -100,7 +100,7 @@ See `arm64-port/CONVENTIONS.md` for the full build/test/debug loop used by the p
 |---|---|---|
 | 0 | ✅ Done | Build, tooling, VIXL scratch harness |
 | 1 | ✅ Done | EE recompiler skeleton (dispatcher, block compiler, constant pool) |
-| 2 | 🔄 Partial | vtlb fast memory — slow path done, fastmem backpatch TODO |
+| 2 | ✅ Partial | vtlb fast memory |
 | 3 | ✅ Done | EE integer arithmetic (ALU, shifts, mul/div, MMI) |
 | 4 | ✅ Done | EE branches, jumps, delay slots, recLUT + block linking |
 | 5 | ✅ Done | EE coprocessors (COP0 inline, COP1 FPU, COP2 macro fallback, MMI SIMD) |
