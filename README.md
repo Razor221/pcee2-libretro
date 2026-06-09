@@ -20,7 +20,7 @@ The upstream PCSX2 project ships an ARM64 *interpreter* build for macOS, but its
 - ✅ EE (Emotion Engine) recompiler — integer, float, MMI, COP0/COP1/COP2, branches, load/store
 - ✅ IOP (I/O Processor / R3000A) recompiler — full integer, load/store, branches, coprocessors
 - ✅ VU (Vector Unit) recompiler — microVU skeleton + Upper FMAC vector ISA complete; Lower ISA and runtime complete
-- 🔄 vtlb fast memory — slow path works; fastmem backpatch still TODO
+- ✅ vtlb fast memory
 - ✅ Native ARM64 binary builds and boots the PS2 BIOS
 - ✅ 2D games are already playable
 - ✅ PS1 games (IOP mode) run at full speed — e.g. *Gran Turismo 2* is fully playable
