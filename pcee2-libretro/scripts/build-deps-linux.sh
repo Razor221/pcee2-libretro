@@ -25,9 +25,18 @@ clone() {
 	[ -d "$2" ] || git clone --depth 1 --branch "$3" --recursive "$1" "$2"
 }
 
+# Set PCEE2_SDL_STATIC=1 to build SDL3 as a static lib instead of shared. With a
+# static-only install, SDL3's CMake config makes SDL3::SDL3 (what the core links)
+# resolve to the static archive, so the resulting core is self-contained and needs
+# no libSDL3.so.0 at runtime — useful for minimal/uncommon ARM distros.
+if [ "${PCEE2_SDL_STATIC:-0}" = "1" ]; then
+	SDL_LIB_FLAGS="-DSDL_SHARED=OFF -DSDL_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON"
+else
+	SDL_LIB_FLAGS="-DSDL_SHARED=ON -DSDL_STATIC=OFF"
+fi
 clone https://github.com/libsdl-org/SDL sdl3 "$SDL"
 cmake -S sdl3 -B sdl3/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-	-DCMAKE_INSTALL_PREFIX="$PREFIX" -DSDL_SHARED=ON -DSDL_STATIC=OFF \
+	-DCMAKE_INSTALL_PREFIX="$PREFIX" $SDL_LIB_FLAGS \
 	-DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
 cmake --build sdl3/build --parallel "$NPROCS"
 cmake --install sdl3/build
