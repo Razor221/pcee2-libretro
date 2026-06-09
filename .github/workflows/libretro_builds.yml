@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - libretro
+      - libretro-arm64
     tags:
       - "v*"
   workflow_dispatch:
@@ -65,6 +66,64 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pcee2_libretro-linux-x86_64
+          path: artifact/*
+
+  build_linux_arm64:
+    name: "Linux aarch64"
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build clang liblz4-dev libwebp-dev \
+            libshaderc-dev libcurl4-openssl-dev libpcap-dev libfontconfig-dev \
+            libudev-dev libx11-dev libxrandr-dev libxext-dev extra-cmake-modules \
+            libwayland-dev libegl-dev libdbus-1-dev libfreetype-dev libjpeg-turbo8-dev \
+            libpng-dev zlib1g-dev libzstd-dev libdrm-dev libxkbcommon-dev libpipewire-0.3-dev \
+            libpulse-dev libasound2-dev \
+            libxcursor-dev libxi-dev libxinerama-dev libxfixes-dev libxrender-dev \
+            libxss-dev libxtst-dev libgl1-mesa-dev libdecor-0-dev libgbm-dev
+
+      - name: Cache Dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: linux-arm64-libretro-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
+
+      - name: Build Dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: bash pcee2-libretro/scripts/build-deps-linux.sh "$PWD/deps"
+
+      - name: Generate CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON \
+            -DCMAKE_PREFIX_PATH="$PWD/deps" \
+            -DSHADERC_STATIC=ON \
+            "-DSHADERC_LIBRARY=$PWD/deps/lib/libshaderc_combined.a" \
+            -DDISABLE_ADVANCE_SIMD=ON
+
+      - name: Build Core
+        run: cmake --build build --target pcee2-libretro
+
+      - name: Prepare Artifact
+        run: |
+          mkdir artifact
+          cp build/bin/pcee2_libretro.so pcee2-libretro/pcee2_libretro.info artifact/
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pcee2_libretro-linux-aarch64
           path: artifact/*
 
   build_windows:

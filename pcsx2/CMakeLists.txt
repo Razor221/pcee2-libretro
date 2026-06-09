@@ -1058,10 +1058,33 @@ set(pcsx2arm64Sources
 	arm64/Vif_Dynarec.cpp
 	arm64/Vif_UnpackNEON.cpp
 	arm64/RecStubs.cpp
+	arm64/aR3000A.cpp
+	arm64/aR5900.cpp
+	arm64/aR5900LoadStore.cpp
+	arm64/aR5900Arith.cpp
+	arm64/aR5900MultDiv.cpp
+	arm64/aR5900Branch.cpp
+	arm64/aR5900FPU.cpp
+	arm64/aR5900MMI.cpp
+	arm64/aVU.cpp
 	)
 
 set(pcsx2arm64Headers
 	arm64/AsmHelpers.h
+	arm64/aR5900.h
+	arm64/aVU.h
+	arm64/aVU_IR.h
+	arm64/aVU_Misc.h
+	arm64/aVU_Analyze.inl
+	arm64/aVU_Alloc.inl
+	arm64/aVU_Clamp.inl
+	arm64/aVU_Misc.inl
+	arm64/aVU_Upper.inl
+	arm64/aVU_Lower.inl
+	arm64/aVU_Tables.inl
+	arm64/aVU_Flags.inl
+	arm64/aVU_Branch.inl
+	arm64/aVU_Compile.inl
 )
 
 # These ones benefit a lot from LTO
