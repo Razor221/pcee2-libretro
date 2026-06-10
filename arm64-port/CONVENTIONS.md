@@ -34,7 +34,8 @@ Constant pool: `ArmConstantPool` (`AsmHelpers.h:113`) provides `GetJumpTrampolin
 and 128-bit constants rather than inlining.
 
 Debugging: `armDisassembleAndDumpCode(ptr, size)` dumps emitted ARM64 — use it
-liberally when JIT output is wrong.
+liberally when JIT output is wrong. See `arm64-port/DEBUGGING.md` for the full
+debug toolkit (MVU_DIFF shadow harness, lldb recipes, etc.).
 
 ---
 

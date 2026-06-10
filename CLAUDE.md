@@ -102,39 +102,24 @@ codesign --force --deep --sign - build/pcsx2-qt/PCSX2.app
 
 ---
 
-## 🔬 microVU1 ⇆ interpreter shadow differential — agentic debug harness
+## 🔬 Debugging tools
 
-Built into `pcsx2/arm64/aVU.cpp`. The primary tool for finding where the **microVU1
-recompiler** diverges from the **VU1 interpreter** (ground truth) on real games. Built for
-agent use: configured entirely via env vars (no recompiles), writes greppable `MVUDIFF
-key=value` records to a file (default `mvudiff.log`, set `MVU_DIFF_OUT`).
+See **`arm64-port/DEBUGGING.md`** for the full reference. Quick summary:
 
-**Transparent by construction.** microVU1 runs as the *real* (committed) VU1 — the game is
-unperturbed. After each VU1 program the harness snapshots microVU's result, rewinds VU1 to the
-program input, and re-runs the *interpreter* as a side-effect-suppressed shadow over the same
-input, then compares. VU1 state + the non-VU1 globals the shadow can touch (`VPU_STAT`, VIF
-`VEW`, `cpuRegs.cycle`) are restored to microVU's values afterwards. XGKICK GS transfers and
-`INTC` raises are gated off during the shadow via the **`g_mvuShadowRun`** flag (gates live in
-`VUops.cpp` `_vuXGKICKTransfer`, `aVU_Lower.inl` `mVU_XGKICK_`/`_vuXGKICKTransfermVU`, and
-`VU1microInterp.cpp` D/T-flag INTC).
-
-**Env knobs:** `MVU_DIFF=1` (enable) · `MVU_DIFF_OUT=<path>` · `MVU_DIFF_PC=<hex>` (focus one
-program's entry byte-PC) · `MVU_DIFF_REG=<vfNN,viNN,acc,q,mac,status,clip>` (watch-list; naming
-a reg also un-suppresses its benign diffs) · `MVU_DIFF_SKIP=<n>` · `MVU_DIFF_MAX=<n>` (line cap,
-default 200, 0=∞) · `MVU_DIFF_ULP=<n>` (benign FP gap, default 4, 0=bit-exact) · `MVU_LOC=1`
-(per-instruction localizer on first real divergence — must be set at startup) · `MVU_VF=1`
-(VF in the per-step compare) · `MVU_DIFF_QRAW=1` (report the benign DIV-latency Q artifact).
-
-**Real divergence** (→ `result=DIVERGE`, fires localizer): computed integer reg `VI01-15` (drive
-branches/addressing), VF/ACC/mem off by >`MVU_DIFF_ULP` ULPs / sign / NaN, or a next-PC mismatch.
-**Benign (suppressed under watch-all):** lazy status/mac/clip flags `VI16-18`, ≤ULP FP rounding
-(microVU `fmul`+`fadd` ≠ interp FMAC), and the DIV-latency Q artifact.
+**MVU_DIFF shadow harness** (`pcsx2/arm64/aVU.cpp`) — finds where microVU1 diverges
+from the interpreter on real games. Runs microVU1 as the real committed VU1, then
+re-runs the interpreter as a suppressed shadow and compares. Configured via env vars,
+writes `MVUDIFF key=value` records to a file.
 
 ```bash
-# Localize the first diverging program on a game:
+# Find + localize the first diverging VU1 program:
 MVU_DIFF=1 MVU_LOC=1 MVU_DIFF_OUT=/tmp/diff.log \
   build/pcsx2-qt/PCSX2.app/Contents/MacOS/PCSX2 -batch <game>
 ```
+
+Key vars: `MVU_DIFF_PC=<hex>` (focus one program), `MVU_DIFF_REG=mac,status,clip`
+(watch-list), `MVU_DIFF_ULP=0` (require bit-exact FP), `MVU_DIFF_SKIP=<n>` (skip
+first n divergences before the per-instruction localizer fires).
 
 ---
 
