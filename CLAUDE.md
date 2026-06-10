@@ -102,11 +102,53 @@ codesign --force --deep --sign - build/pcsx2-qt/PCSX2.app
 
 ---
 
+## 🔬 microVU1 ⇆ interpreter shadow differential — agentic debug harness
+
+Built into `pcsx2/arm64/aVU.cpp`. The primary tool for finding where the **microVU1
+recompiler** diverges from the **VU1 interpreter** (ground truth) on real games. Built for
+agent use: configured entirely via env vars (no recompiles), writes greppable `MVUDIFF
+key=value` records to a file (default `mvudiff.log`, set `MVU_DIFF_OUT`).
+
+**Transparent by construction.** microVU1 runs as the *real* (committed) VU1 — the game is
+unperturbed. After each VU1 program the harness snapshots microVU's result, rewinds VU1 to the
+program input, and re-runs the *interpreter* as a side-effect-suppressed shadow over the same
+input, then compares. VU1 state + the non-VU1 globals the shadow can touch (`VPU_STAT`, VIF
+`VEW`, `cpuRegs.cycle`) are restored to microVU's values afterwards. XGKICK GS transfers and
+`INTC` raises are gated off during the shadow via the **`g_mvuShadowRun`** flag (gates live in
+`VUops.cpp` `_vuXGKICKTransfer`, `aVU_Lower.inl` `mVU_XGKICK_`/`_vuXGKICKTransfermVU`, and
+`VU1microInterp.cpp` D/T-flag INTC).
+
+**Env knobs:** `MVU_DIFF=1` (enable) · `MVU_DIFF_OUT=<path>` · `MVU_DIFF_PC=<hex>` (focus one
+program's entry byte-PC) · `MVU_DIFF_REG=<vfNN,viNN,acc,q,mac,status,clip>` (watch-list; naming
+a reg also un-suppresses its benign diffs) · `MVU_DIFF_SKIP=<n>` · `MVU_DIFF_MAX=<n>` (line cap,
+default 200, 0=∞) · `MVU_DIFF_ULP=<n>` (benign FP gap, default 4, 0=bit-exact) · `MVU_LOC=1`
+(per-instruction localizer on first real divergence — must be set at startup) · `MVU_VF=1`
+(VF in the per-step compare) · `MVU_DIFF_QRAW=1` (report the benign DIV-latency Q artifact).
+
+**Real divergence** (→ `result=DIVERGE`, fires localizer): computed integer reg `VI01-15` (drive
+branches/addressing), VF/ACC/mem off by >`MVU_DIFF_ULP` ULPs / sign / NaN, or a next-PC mismatch.
+**Benign (suppressed under watch-all):** lazy status/mac/clip flags `VI16-18`, ≤ULP FP rounding
+(microVU `fmul`+`fadd` ≠ interp FMAC), and the DIV-latency Q artifact.
+
+```bash
+# Localize the first diverging program on a game:
+MVU_DIFF=1 MVU_LOC=1 MVU_DIFF_OUT=/tmp/diff.log \
+  build/pcsx2-qt/PCSX2.app/Contents/MacOS/PCSX2 -batch <game>
+```
+
+---
+
 ## 🚧 Hard rules (do not violate)
 
-1. **Never break the x86-64 build.** All ARM64 code goes behind `#ifdef _M_ARM64`
-   (or `#ifndef _M_X86`) guards or in `pcsx2/arm64/` files. The x86 recompiler in
-   `pcsx2/x86/` is the reference — read it, never break it.
+1. **Never break the x86-64 build.** All ARM64 code goes behind `#ifdef ARCH_ARM64`
+   guards or in `pcsx2/arm64/` files. The x86 recompiler in `pcsx2/x86/` is the
+   reference — read it, never break it.
+   **⚠ Use `ARCH_ARM64` / `ARCH_X86` (defined in `common/Pcsx2Defs.h`), NOT
+   `_M_ARM64` / `_M_X86`.** The `_M_*` macros are MSVC-only predefined macros; under
+   the Apple-clang toolchain used here they are **never defined**, so `#ifdef _M_ARM64`
+   silently compiles to nothing (dead code) and `#ifndef _M_X86` is true on *every*
+   non-MSVC target including x86 Linux. A whole class of "the gate isn't taking effect"
+   bugs traces back to this — when an `#ifdef` block seems ignored, check the macro first.
 2. **Work on the `armjit` branch.** Make atomic commits (one opcode family / one
    subtask per commit). Commit messages: `ARM64: <what>` e.g.
    `ARM64: Add recLB/recSB load-store generators`.
