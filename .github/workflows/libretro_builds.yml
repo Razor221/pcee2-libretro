@@ -33,7 +33,7 @@ jobs:
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: deps
           key: linux-libretro-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
@@ -62,7 +62,7 @@ jobs:
           cp build/bin/pcee2_libretro.so pcee2-libretro/pcee2_libretro.info artifact/
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pcee2_libretro-linux-x86_64
           path: artifact/*
@@ -85,7 +85,7 @@ jobs:
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: deps
           key: windows-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-windows.bat') }}
@@ -99,7 +99,7 @@ jobs:
 
       - name: Save Dependencies Cache
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: deps
           key: windows-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-windows.bat') }}
@@ -130,7 +130,7 @@ jobs:
           ) > artifact\README.txt
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pcee2_libretro-windows-x64
           path: artifact/*
@@ -155,7 +155,7 @@ jobs:
 
       - name: Restore Dependencies Cache
         id: cache-deps
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ~/deps
           key: macos-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh') }}
@@ -167,7 +167,7 @@ jobs:
       # save immediately so a later timeout can't lose the deps build
       - name: Save Dependencies Cache
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ~/deps
           key: macos-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh') }}
@@ -206,7 +206,7 @@ jobs:
           ls -la
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pcee2_libretro-macos-x86_64
           path: artifact/*
@@ -220,7 +220,7 @@ jobs:
       contents: write
     steps:
       - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -232,6 +232,6 @@ jobs:
           done
 
       - name: Attach to Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: artifacts/pcee2_libretro-*.zip
