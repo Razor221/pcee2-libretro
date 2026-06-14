@@ -81,4 +81,28 @@ mkdir -p "$PREFIX/lib" "$PREFIX/include"
 cp shaderc/b/libshaderc/libshaderc_combined.a "$PREFIX/lib/"
 cp -r shaderc/libshaderc/include/shaderc "$PREFIX/include/"
 
+# Some distros (notably Debian Bookworm, the glibc target for Raspberry Pi OS)
+# ship libpng / libzstd a hair older than PCSX2's find_package() minimums
+# (PNG >= 1.6.40, Zstd >= 1.5.5). Bookworm has 1.6.39 / 1.5.4. Build newer ones
+# static into the prefix so they're found before the system copies and get
+# embedded into the core (no runtime dependency on the Pi's older .so either).
+# Set PCEE2_BUILD_PNG_ZSTD=1 to enable; off by default so the Ubuntu jobs, whose
+# system libs already satisfy the minimums, keep using those.
+if [ "${PCEE2_BUILD_PNG_ZSTD:-0}" = "1" ]; then
+	clone https://github.com/pnggroup/libpng libpng v1.6.43
+	cmake -S libpng -B libpng/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+		-DPNG_SHARED=OFF -DPNG_STATIC=ON -DPNG_TESTS=OFF -DPNG_TOOLS=OFF
+	cmake --build libpng/build --parallel "$NPROCS"
+	cmake --install libpng/build
+
+	clone https://github.com/facebook/zstd zstd v1.5.6
+	cmake -S zstd/build/cmake -B zstd/b -G Ninja -DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+		-DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON \
+		-DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF
+	cmake --build zstd/b --parallel "$NPROCS"
+	cmake --install zstd/b
+fi
+
 echo "Dependencies installed to $PREFIX"

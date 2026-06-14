@@ -236,6 +236,7 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         env:
           PCEE2_SDL_STATIC: "1"
+          PCEE2_BUILD_PNG_ZSTD: "1"
         run: bash pcee2-libretro/scripts/build-deps-linux.sh "$PWD/deps"
 
       - name: Generate CMake
