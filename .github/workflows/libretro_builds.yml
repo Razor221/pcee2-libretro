@@ -195,6 +195,94 @@ jobs:
           name: pcee2_libretro-linux-aarch64-isztl-static
           path: artifact/*
 
+  build_linux_arm64_bookworm:
+    name: "Linux aarch64 (Debian Bookworm, static SDL3)"
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 180
+    steps:
+      # Build inside a Debian Bookworm container so the core links against
+      # glibc 2.36, matching Raspberry Pi OS Bookworm. The ubuntu-24.04-arm
+      # runner used by the other aarch64 jobs links glibc 2.38, which won't
+      # load on a Pi (GLIBC_2.38 not found). clang-16 (Bookworm main) is new
+      # enough for the C++20 codebase.
+      - name: Install Packages
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates git python3 build-essential pkg-config \
+            cmake ninja-build clang-16 \
+            liblz4-dev libwebp-dev libcurl4-openssl-dev libpcap-dev libfontconfig-dev \
+            libudev-dev libx11-dev libxrandr-dev libxext-dev extra-cmake-modules \
+            libwayland-dev libegl-dev libdbus-1-dev libfreetype-dev libjpeg-dev \
+            libpng-dev zlib1g-dev libzstd-dev libdrm-dev libxkbcommon-dev libpipewire-0.3-dev \
+            libpulse-dev libasound2-dev \
+            libxcursor-dev libxi-dev libxinerama-dev libxfixes-dev libxrender-dev \
+            libxss-dev libxtst-dev libgl1-mesa-dev libdecor-0-dev libgbm-dev
+
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Cache Dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: linux-arm64-bookworm-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
+
+      - name: Build Dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        env:
+          PCEE2_SDL_STATIC: "1"
+        run: bash pcee2-libretro/scripts/build-deps-linux.sh "$PWD/deps"
+
+      - name: Generate CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-16 -DCMAKE_CXX_COMPILER=clang++-16 \
+            -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON \
+            -DCMAKE_PREFIX_PATH="$PWD/deps" \
+            -DSHADERC_STATIC=ON \
+            "-DSHADERC_LIBRARY=$PWD/deps/lib/libshaderc_combined.a" \
+            -DDISABLE_ADVANCE_SIMD=ON
+
+      - name: Build Core
+        run: cmake --build build --target pcee2-libretro
+
+      - name: Verify self-contained (no libSDL3 NEEDED)
+        run: |
+          if readelf -d build/bin/pcee2_libretro.so | grep -q 'libSDL3'; then
+            echo "ERROR: core still links libSDL3 dynamically:"
+            readelf -d build/bin/pcee2_libretro.so | grep NEEDED
+            exit 1
+          fi
+          echo "OK: SDL3 is statically linked, core is self-contained."
+
+      - name: Verify glibc <= 2.36 (Bookworm-compatible)
+        run: |
+          maxglibc=$(objdump -T build/bin/pcee2_libretro.so | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V | tail -1)
+          echo "Max required glibc: $maxglibc"
+          # 2.36 is Bookworm's glibc; fail if the core needs anything newer.
+          if [ "$(printf '%s\nGLIBC_2.36\n' "$maxglibc" | sort -V | tail -1)" != "GLIBC_2.36" ]; then
+            echo "ERROR: core requires $maxglibc, newer than Bookworm's GLIBC_2.36"
+            exit 1
+          fi
+          echo "OK: core is Bookworm-glibc-compatible."
+
+      - name: Prepare Artifact
+        run: |
+          mkdir artifact
+          cp build/bin/pcee2_libretro.so pcee2-libretro/pcee2_libretro.info artifact/
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pcee2_libretro-linux-aarch64-bookworm-vk
+          path: artifact/*
+
   build_windows:
     name: "Windows x64 (MSVC)"
     runs-on: windows-2025
