@@ -452,7 +452,15 @@ Pcsx2Config::RecompilerOptions::RecompilerOptions()
 	EnableIOP = true;
 	EnableVU0 = true;
 	EnableVU1 = true;
+#if defined(_M_ARM64)
+	// EXPERIMENT (2026-06-14): default fastmem off on ARM64 to test whether the
+	// post-boot crash lives in the fastmem/SMC fault-recovery path. The ARM64 EE
+	// recompiler does not gate codegen on CHECK_FASTMEM, but this flag still
+	// changes the vtlb fastmem-area setup and the page-fault handler path.
+	EnableFastmem = false;
+#else
 	EnableFastmem = true;
+#endif
 	PauseOnTLBMiss = false;
 
 	// vu and fpu clamping default to standard overflow.

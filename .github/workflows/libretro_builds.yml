@@ -248,8 +248,7 @@ jobs:
             -DCMAKE_PREFIX_PATH="$PWD/deps" \
             -DSHADERC_STATIC=ON \
             "-DSHADERC_LIBRARY=$PWD/deps/lib/libshaderc_combined.a" \
-            -DDISABLE_ADVANCE_SIMD=ON \
-            -DHOST_PAGE_SIZE:STRING=0x4000
+            -DDISABLE_ADVANCE_SIMD=ON
 
       - name: Build Core
         run: cmake --build build --target pcee2-libretro
