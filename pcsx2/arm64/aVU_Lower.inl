@@ -178,15 +178,6 @@ mVUop(mVU_DIV)
 		const a64::VRegister Fs = mVU.regAlloc->allocReg(_Fs_, 0, (1 << (3 - _Fsf_)));
 		const a64::VRegister t1 = mVU.regAlloc->allocReg();
 
-		// DEBUG: capture runtime numerator/denominator
-		extern bool g_mvuDiffActive; extern volatile u32 g_divDbg[4]; extern void mvuDivDump(u32 wq, u32 rq, u32 pc);
-		if (g_mvuDiffActive && isVU1)
-		{
-			armMoveAddressToReg(RSCRATCHADDR, (void*)&g_divDbg[0]);
-			armAsm->Str(Fs.S(), a64::MemOperand(RSCRATCHADDR, 0)); // numerator
-			armAsm->Str(Ft.S(), a64::MemOperand(RSCRATCHADDR, 4)); // denominator
-		}
-
 		a64::Label cjmp, ajmp, bjmp, djmp;
 		testZero(Ft, t1, gprT1); // Test if Ft is zero
 		armAsm->B(&cjmp, a64::eq); // Skip if not zero
@@ -213,19 +204,6 @@ mVUop(mVU_DIV)
 		armAsm->Bind(&djmp);
 
 		writeQreg(Fs, mVUinfo.writeQ);
-
-		// DEBUG: capture runtime result + log
-		if (g_mvuDiffActive && isVU1)
-		{
-			armMoveAddressToReg(RSCRATCHADDR, (void*)&g_divDbg[2]);
-			armAsm->Str(Fs.S(), a64::MemOperand(RSCRATCHADDR)); // result
-			mVUbackupRegs(mVU, true, true);
-			armAsm->Mov(RWARG1.W(), mVUinfo.writeQ);
-			armAsm->Mov(RWARG2.W(), mVUinfo.readQ);
-			armAsm->Mov(RWARG3.W(), xPC);
-			armEmitCall(reinterpret_cast<const void*>(&mvuDivDump));
-			mVUrestoreRegs(mVU, true, true);
-		}
 
 		if (mVU.cop2)
 		{
@@ -254,8 +232,11 @@ mVUop(mVU_SQRT)
 
 		if (CHECK_VU_OVERFLOW(mVU.index)) // Clamp infinities (only need positive clamp since Ft is positive)
 		{
+			// Fminnm, not Fmin: x86 MIN.SS returns the second operand (fmax) when Ft
+			// is a NaN pattern (a valid huge number on the PS2); Fmin would propagate
+			// the NaN into Fsqrt and poison Q.
 			mvuLdrSS(RQSCRATCH, mVUglob.maxvals);
-			armAsm->Fmin(Ft.S(), Ft.S(), RQSCRATCH.S());
+			armAsm->Fminnm(Ft.S(), Ft.S(), RQSCRATCH.S());
 		}
 		armAsm->Fsqrt(Ft.S(), Ft.S());
 		writeQreg(Ft, mVUinfo.writeQ);
@@ -345,7 +326,7 @@ static __fi void mVU_EATAN_(mV, const a64::VRegister& PQ, const a64::VRegister& 
 {
 	armAsm->Ins(PQ.V4S(), 0, Fs.V4S(), 0);
 	mvuLdrSS(RQSCRATCH, mVUglob.T1);
-	armAsm->Fmul(PQ.S(), PQ.S(), RQSCRATCH.S());
+	mVUscalarMulKeep(PQ, PQ, RQSCRATCH); // keep Q lanes (see aVU_IR.h)
 	armAsm->Mov(t2.V16B(), Fs.V16B());
 	EATANhelper(mVUglob.T2);
 	EATANhelper(mVUglob.T3);
@@ -355,7 +336,7 @@ static __fi void mVU_EATAN_(mV, const a64::VRegister& PQ, const a64::VRegister& 
 	EATANhelper(mVUglob.T7);
 	EATANhelper(mVUglob.T8);
 	mvuLdrSS(RQSCRATCH, mVUglob.Pi4);
-	armAsm->Fadd(PQ.S(), PQ.S(), RQSCRATCH.S());
+	mVUscalarAddKeep(PQ, PQ, RQSCRATCH); // keep Q lanes (see aVU_IR.h)
 	mVUshufflePS(PQ, PQ, mVUinfo.writeP ? 0x27 : 0xC6);
 }
 
@@ -379,7 +360,7 @@ mVUop(mVU_EATAN)
 		armAsm->Ins(mVU_xmmPQ.V4S(), 0, Fs.V4S(), 0);
 		mvuLdrSS(RQSCRATCH, mVUglob.one);
 		armAsm->Fsub(Fs.S(), Fs.S(), RQSCRATCH.S());
-		armAsm->Fadd(mVU_xmmPQ.S(), mVU_xmmPQ.S(), RQSCRATCH.S());
+		mVUscalarAddKeep(mVU_xmmPQ, mVU_xmmPQ, RQSCRATCH); // keep Q lanes (see aVU_IR.h)
 		SSE_DIVSS(mVU, Fs, mVU_xmmPQ);
 		mVU_EATAN_(mVU, mVU_xmmPQ, Fs, t1, t2);
 		mVU.regAlloc->clearNeeded(Fs);
@@ -480,9 +461,9 @@ mVUop(mVU_EEXP)
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip xmmPQ to get Valid P instance
 		armAsm->Ins(mVU_xmmPQ.V4S(), 0, Fs.V4S(), 0);
 		mvuLdrSS(RQSCRATCH, mVUglob.E1);
-		armAsm->Fmul(mVU_xmmPQ.S(), mVU_xmmPQ.S(), RQSCRATCH.S());
+		mVUscalarMulKeep(mVU_xmmPQ, mVU_xmmPQ, RQSCRATCH); // keep Q lanes (see aVU_IR.h)
 		mvuLdrSS(RQSCRATCH, mVUglob.one);
-		armAsm->Fadd(mVU_xmmPQ.S(), mVU_xmmPQ.S(), RQSCRATCH.S());
+		mVUscalarAddKeep(mVU_xmmPQ, mVU_xmmPQ, RQSCRATCH); // keep Q lanes (see aVU_IR.h)
 		armAsm->Mov(t1.V16B(), Fs.V16B());
 		SSE_MULSS(mVU, t1, Fs);
 		armAsm->Mov(t2.V16B(), t1.V16B());
@@ -537,7 +518,7 @@ mVUop(mVU_ELENG)
 		const a64::VRegister Fs = mVU.regAlloc->allocReg(_Fs_, 0, _X_Y_Z_W);
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip xmmPQ to get Valid P instance
 		mVU_sumXYZ(mVU, mVU_xmmPQ, Fs);
-		armAsm->Fsqrt(mVU_xmmPQ.S(), mVU_xmmPQ.S());
+		mVUscalarSqrtKeep(mVU_xmmPQ, mVU_xmmPQ); // keep Q lanes (see aVU_IR.h)
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip back
 		mVU.regAlloc->clearNeeded(Fs);
 		mVU.profiler.EmitOp(opELENG);
@@ -587,7 +568,7 @@ mVUop(mVU_ERLENG)
 		const a64::VRegister Fs = mVU.regAlloc->allocReg(_Fs_, 0, _X_Y_Z_W);
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip xmmPQ to get Valid P instance
 		mVU_sumXYZ(mVU, mVU_xmmPQ, Fs);
-		armAsm->Fsqrt(mVU_xmmPQ.S(), mVU_xmmPQ.S());
+		mVUscalarSqrtKeep(mVU_xmmPQ, mVU_xmmPQ); // keep Q lanes (see aVU_IR.h)
 		mvuLdrSS(Fs, mVUglob.one);
 		SSE_DIVSS(mVU, Fs, mVU_xmmPQ);
 		armAsm->Ins(mVU_xmmPQ.V4S(), 0, Fs.V4S(), 0);
@@ -641,7 +622,7 @@ mVUop(mVU_ERSQRT)
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip xmmPQ to get Valid P instance
 		mvuLdrQ(RQSCRATCH, mVUglob.absclip);
 		armAsm->And(Fs.V16B(), Fs.V16B(), RQSCRATCH.V16B());
-		armAsm->Fsqrt(mVU_xmmPQ.S(), Fs.S());
+		mVUscalarSqrtKeep(mVU_xmmPQ, Fs); // keep Q lanes (see aVU_IR.h)
 		mvuLdrSS(Fs, mVUglob.one);
 		SSE_DIVSS(mVU, Fs, mVU_xmmPQ);
 		armAsm->Ins(mVU_xmmPQ.V4S(), 0, Fs.V4S(), 0);
@@ -741,7 +722,7 @@ mVUop(mVU_ESQRT)
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip xmmPQ to get Valid P instance
 		mvuLdrQ(RQSCRATCH, mVUglob.absclip);
 		armAsm->And(Fs.V16B(), Fs.V16B(), RQSCRATCH.V16B());
-		armAsm->Fsqrt(mVU_xmmPQ.S(), Fs.S());
+		mVUscalarSqrtKeep(mVU_xmmPQ, Fs); // keep Q lanes (see aVU_IR.h)
 		mVUshufflePS(mVU_xmmPQ, mVU_xmmPQ, mVUinfo.writeP ? 0x27 : 0xC6); // Flip back
 		mVU.regAlloc->clearNeeded(Fs);
 		mVU.profiler.EmitOp(opESQRT);
@@ -1892,7 +1873,7 @@ mVUop(mVU_XITOP)
 
 void mVU_XGKICK_(u32 addr)
 {
-	if (s_mvuShadowRun) // DEBUG shadow run: don't transfer to GS (see MVU_DIFF)
+	if (g_mvuShadowRun) // DEBUG shadow run: don't transfer to GS (see MVU_DIFF)
 		return;
 	addr = (addr & 0x3ff) * 16;
 	u32 diff = 0x4000 - addr;
@@ -1911,7 +1892,7 @@ void mVU_XGKICK_(u32 addr)
 
 void _vuXGKICKTransfermVU(bool flush)
 {
-	if (s_mvuShadowRun) // DEBUG shadow run: don't transfer to GS (see MVU_DIFF)
+	if (g_mvuShadowRun) // DEBUG shadow run: don't transfer to GS (see MVU_DIFF)
 		return;
 	while (VU1.xgkickenable && (flush || VU1.xgkickcyclecount >= 2))
 	{
