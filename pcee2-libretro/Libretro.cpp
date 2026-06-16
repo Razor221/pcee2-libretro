@@ -1462,6 +1462,12 @@ bool Host::CopyTextToClipboard(const std::string_view text)
 	return false;
 }
 
+std::string Host::GetTextFromClipboard()
+{
+	// No host clipboard access from within the libretro core.
+	return std::string();
+}
+
 void Host::BeginTextInput()
 {
 }
