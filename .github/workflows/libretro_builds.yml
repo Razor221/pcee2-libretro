@@ -284,6 +284,99 @@ jobs:
           name: pcee2_libretro-linux-aarch64-bookworm-vk
           path: artifact/*
 
+  build_linux_arm64_bookworm_16k:
+    name: "Linux aarch64 (Debian Bookworm, 16 KB pages, Pi 5)"
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 180
+    steps:
+      # Same Bookworm/glibc-2.36 toolchain as build_linux_arm64_bookworm, but
+      # bakes HOST_PAGE_SIZE=0x4000 so __pagesize matches a 16 KB-page kernel.
+      # The ubuntu-24.04-arm runner is itself a 4 KB-page host, hence the
+      # compile-time override. This artifact ONLY runs on a 16 KB-page host
+      # (Raspberry Pi OS arm64 on a Pi 5 with the default 16 KB kernel);
+      # VMManager's ARM64 page-size check refuses to run it on a 4 KB kernel,
+      # which is intentional. Pair it with the 4 KB bookworm-vk core: the tester
+      # uses whichever matches `getconf PAGESIZE` on the device.
+      - name: Install Packages
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates git python3 build-essential pkg-config \
+            cmake ninja-build clang-16 \
+            liblz4-dev libwebp-dev libcurl4-openssl-dev libpcap-dev libfontconfig-dev \
+            libudev-dev libx11-dev libxrandr-dev libxext-dev extra-cmake-modules \
+            libwayland-dev libegl-dev libdbus-1-dev libfreetype-dev libjpeg-dev \
+            libpng-dev zlib1g-dev libzstd-dev libdrm-dev libxkbcommon-dev libpipewire-0.3-dev \
+            libpulse-dev libasound2-dev \
+            libxcursor-dev libxi-dev libxinerama-dev libxfixes-dev libxrender-dev \
+            libxss-dev libxtst-dev libgl1-mesa-dev libdecor-0-dev libgbm-dev
+
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Cache Dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: linux-arm64-bookworm-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
+
+      - name: Build Dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        env:
+          PCEE2_SDL_STATIC: "1"
+          PCEE2_BUILD_PNG_ZSTD: "1"
+        run: bash pcee2-libretro/scripts/build-deps-linux.sh "$PWD/deps"
+
+      - name: Generate CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-16 -DCMAKE_CXX_COMPILER=clang++-16 \
+            -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON \
+            -DCMAKE_PREFIX_PATH="$PWD/deps" \
+            -DSHADERC_STATIC=ON \
+            "-DSHADERC_LIBRARY=$PWD/deps/lib/libshaderc_combined.a" \
+            -DDISABLE_ADVANCE_SIMD=ON \
+            -DHOST_PAGE_SIZE:STRING=0x4000
+
+      - name: Build Core
+        run: cmake --build build --target pcee2-libretro
+
+      - name: Verify self-contained (no libSDL3 NEEDED)
+        run: |
+          if readelf -d build/bin/pcee2_libretro.so | grep -q 'libSDL3'; then
+            echo "ERROR: core still links libSDL3 dynamically:"
+            readelf -d build/bin/pcee2_libretro.so | grep NEEDED
+            exit 1
+          fi
+          echo "OK: SDL3 is statically linked, core is self-contained."
+
+      - name: Verify glibc <= 2.36 (Bookworm-compatible)
+        run: |
+          maxglibc=$(objdump -T build/bin/pcee2_libretro.so | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V | tail -1)
+          echo "Max required glibc: $maxglibc"
+          # 2.36 is Bookworm's glibc; fail if the core needs anything newer.
+          if [ "$(printf '%s\nGLIBC_2.36\n' "$maxglibc" | sort -V | tail -1)" != "GLIBC_2.36" ]; then
+            echo "ERROR: core requires $maxglibc, newer than Bookworm's GLIBC_2.36"
+            exit 1
+          fi
+          echo "OK: core is Bookworm-glibc-compatible."
+
+      - name: Prepare Artifact
+        run: |
+          mkdir artifact
+          cp build/bin/pcee2_libretro.so pcee2-libretro/pcee2_libretro.info artifact/
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pcee2_libretro-linux-aarch64-bookworm-16k-vk
+          path: artifact/*
+
   build_windows:
     name: "Windows x64 (MSVC)"
     runs-on: windows-2025
@@ -431,7 +524,10 @@ jobs:
   release:
     name: "Attach Release Assets"
     if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && needs.build_linux.result == 'success' && needs.build_windows.result == 'success' }}
-    needs: [build_linux, build_windows, build_macos]
+    # bookworm jobs are in needs (not in the if) purely to order the release
+    # after them, so their aarch64 cores exist when artifacts are downloaded;
+    # !cancelled() means a bookworm failure still lets the release run.
+    needs: [build_linux, build_windows, build_macos, build_linux_arm64_bookworm, build_linux_arm64_bookworm_16k]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -451,4 +547,5 @@ jobs:
       - name: Attach to Release
         uses: softprops/action-gh-release@v2
         with:
+          prerelease: true
           files: artifacts/pcee2_libretro-*.zip

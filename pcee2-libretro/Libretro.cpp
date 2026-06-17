@@ -570,6 +570,13 @@ void LibretroHost::RegisterCoreOptions()
 			"performance",
 			{{"0", "Disabled (Default)"}, {"1", "Mild"}, {"2", "Moderate"}, {"3", "Maximum"}, {nullptr, nullptr}},
 			"0"},
+		{"pcsx2_cpu_recompiler", "CPU Recompiler (JIT)", nullptr,
+			"Diagnostic. Enabled runs the EE, IOP and VU0/VU1 dynarecs (JIT, fast, default). Disabled runs "
+			"every CPU as an interpreter, which is far slower but isolates JIT bugs: if a crash still happens "
+			"with this off, the recompiler is not the cause. Requires restart.",
+			nullptr, "performance",
+			{{"enabled", "Enabled (JIT, Default)"}, {"disabled", "Disabled (Interpreter)"}, {nullptr, nullptr}},
+			"enabled"},
 		{nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, {{nullptr, nullptr}}, nullptr},
 	};
 
@@ -791,6 +798,19 @@ void LibretroHost::ReadCoreOptions(bool startup)
 
 		s_settings_interface.SetBoolValue("EmuCore", "EnableFastBoot",
 			std::strcmp(get_option("pcsx2_fast_boot", "enabled"), "enabled") == 0);
+
+		// Diagnostic toggle: when off, disable every recompiler so the EE, IOP
+		// and both VUs run as interpreters. Lets a tester check whether a crash
+		// survives without the JIT (if it does, the dynarec isn't the cause).
+		// Recompiler enables are latched when the CPUs are created, so this only
+		// takes effect on a fresh boot.
+		const bool jit = std::strcmp(get_option("pcsx2_cpu_recompiler", "enabled"), "enabled") == 0;
+		s_settings_interface.SetBoolValue("EmuCore/CPU/Recompiler", "EnableEE", jit);
+		s_settings_interface.SetBoolValue("EmuCore/CPU/Recompiler", "EnableIOP", jit);
+		s_settings_interface.SetBoolValue("EmuCore/CPU/Recompiler", "EnableVU0", jit);
+		s_settings_interface.SetBoolValue("EmuCore/CPU/Recompiler", "EnableVU1", jit);
+		if (!jit)
+			Console.WriteLn("CPU recompilers DISABLED via core option: EE/IOP/VU0/VU1 running as interpreters.");
 	}
 }
 
