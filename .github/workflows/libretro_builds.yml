@@ -550,5 +550,6 @@ jobs:
       - name: Attach to Release
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: true
+          prerelease: false
+          make_latest: true
           files: artifacts/pcee2_libretro-*.zip
