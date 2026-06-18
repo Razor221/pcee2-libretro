@@ -571,11 +571,36 @@ void LibretroHost::RegisterCoreOptions()
 			{{"0", "Disabled (Default)"}, {"1", "Mild"}, {"2", "Moderate"}, {"3", "Maximum"}, {nullptr, nullptr}},
 			"0"},
 		{"pcsx2_cpu_recompiler", "CPU Recompiler (JIT)", nullptr,
-			"Diagnostic. Enabled runs the EE, IOP and VU0/VU1 dynarecs (JIT, fast, default). Disabled runs "
-			"every CPU as an interpreter, which is far slower but isolates JIT bugs: if a crash still happens "
-			"with this off, the recompiler is not the cause. Requires restart.",
+			"Diagnostic master switch. Enabled runs the EE, IOP and VU0/VU1 dynarecs (JIT, fast, default). "
+			"Disabled forces every CPU to an interpreter, which is far slower but isolates JIT bugs: if a crash "
+			"still happens with this off, the recompiler is not the cause. The four per-CPU switches below only "
+			"take effect while this is Enabled. Requires restart.",
 			nullptr, "performance",
 			{{"enabled", "Enabled (JIT, Default)"}, {"disabled", "Disabled (Interpreter)"}, {nullptr, nullptr}},
+			"enabled"},
+		{"pcsx2_rec_ee", "  - EE Recompiler", nullptr,
+			"Diagnostic. Disable just the Emotion Engine (EE) dynarec while leaving the others on, to bisect "
+			"which recompiler causes a crash. Requires restart.",
+			nullptr, "performance",
+			{{"enabled", "Enabled (Default)"}, {"disabled", "Disabled (Interpreter)"}, {nullptr, nullptr}},
+			"enabled"},
+		{"pcsx2_rec_iop", "  - IOP Recompiler", nullptr,
+			"Diagnostic. Disable just the IOP (R3000) dynarec while leaving the others on, to bisect which "
+			"recompiler causes a crash. Requires restart.",
+			nullptr, "performance",
+			{{"enabled", "Enabled (Default)"}, {"disabled", "Disabled (Interpreter)"}, {nullptr, nullptr}},
+			"enabled"},
+		{"pcsx2_rec_vu0", "  - VU0 Recompiler", nullptr,
+			"Diagnostic. Disable just the VU0 microVU dynarec while leaving the others on, to bisect which "
+			"recompiler causes a crash. Requires restart.",
+			nullptr, "performance",
+			{{"enabled", "Enabled (Default)"}, {"disabled", "Disabled (Interpreter)"}, {nullptr, nullptr}},
+			"enabled"},
+		{"pcsx2_rec_vu1", "  - VU1 Recompiler", nullptr,
+			"Diagnostic. Disable just the VU1 microVU dynarec while leaving the others on, to bisect which "
+			"recompiler causes a crash. Requires restart.",
+			nullptr, "performance",
+			{{"enabled", "Enabled (Default)"}, {"disabled", "Disabled (Interpreter)"}, {nullptr, nullptr}},
 			"enabled"},
 		{nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, {{nullptr, nullptr}}, nullptr},
 	};
@@ -799,18 +824,27 @@ void LibretroHost::ReadCoreOptions(bool startup)
 		s_settings_interface.SetBoolValue("EmuCore", "EnableFastBoot",
 			std::strcmp(get_option("pcsx2_fast_boot", "enabled"), "enabled") == 0);
 
-		// Diagnostic toggle: when off, disable every recompiler so the EE, IOP
-		// and both VUs run as interpreters. Lets a tester check whether a crash
-		// survives without the JIT (if it does, the dynarec isn't the cause).
-		// Recompiler enables are latched when the CPUs are created, so this only
-		// takes effect on a fresh boot.
+		// Diagnostic toggles: the master switch forces every CPU to its
+		// interpreter when off; the four per-CPU switches then let a tester
+		// re-enable the dynarecs one at a time to bisect which recompiler
+		// causes a crash. Effective enable = master AND per-CPU. Recompiler
+		// enables are latched when the CPUs are created, so this only takes
+		// effect on a fresh boot.
 		const bool jit = std::strcmp(get_option("pcsx2_cpu_recompiler", "enabled"), "enabled") == 0;
-		s_settings_interface.SetBoolValue("EmuCore/CPU/Recompiler", "EnableEE", jit);
-		s_settings_interface.SetBoolValue("EmuCore/CPU/Recompiler", "EnableIOP", jit);
-		s_settings_interface.SetBoolValue("EmuCore/CPU/Recompiler", "EnableVU0", jit);
-		s_settings_interface.SetBoolValue("EmuCore/CPU/Recompiler", "EnableVU1", jit);
-		if (!jit)
-			Console.WriteLn("CPU recompilers DISABLED via core option: EE/IOP/VU0/VU1 running as interpreters.");
+		const auto rec_on = [&](const char* key) {
+			return jit && std::strcmp(get_option(key, "enabled"), "enabled") == 0;
+		};
+		const bool ee = rec_on("pcsx2_rec_ee");
+		const bool iop = rec_on("pcsx2_rec_iop");
+		const bool vu0 = rec_on("pcsx2_rec_vu0");
+		const bool vu1 = rec_on("pcsx2_rec_vu1");
+		s_settings_interface.SetBoolValue("EmuCore/CPU/Recompiler", "EnableEE", ee);
+		s_settings_interface.SetBoolValue("EmuCore/CPU/Recompiler", "EnableIOP", iop);
+		s_settings_interface.SetBoolValue("EmuCore/CPU/Recompiler", "EnableVU0", vu0);
+		s_settings_interface.SetBoolValue("EmuCore/CPU/Recompiler", "EnableVU1", vu1);
+		if (!(ee && iop && vu0 && vu1))
+			Console.WriteLnFmt("Recompiler state via core options: EE={} IOP={} VU0={} VU1={} (off = interpreter).",
+				ee, iop, vu0, vu1);
 	}
 }
 
