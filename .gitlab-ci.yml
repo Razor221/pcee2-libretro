@@ -49,10 +49,19 @@ stages:
 #################################### STAGES ##################################
 ##############################################################################
 
-# Linux 64-bit (x86_64). pcee2 currently targets x86_64 + Vulkan only.
+# Linux 64-bit (x86_64).
 libretro-build-linux-x64:
   extends:
     - .libretro-linux-cmake-x86_64
+    - .core-defs
+  before_script:
+    - *pcee2-deps-linux
+
+# Linux ARM 64-bit (aarch64). pcee2 ships aarch64 builds; the buildbot
+# provides an aarch64 image/runner via .libretro-linux-cmake-aarch64.
+libretro-build-linux-aarch64:
+  extends:
+    - .libretro-linux-cmake-aarch64
     - .core-defs
   before_script:
     - *pcee2-deps-linux
