@@ -1,0 +1,58 @@
+# DESCRIPTION: GitLab CI/CD for libRetro (NOT FOR GitLab-proper)
+#
+# This drives the libretro buildbot, the same way nuance-linux-libretro does.
+#
+# NOTE: unlike most libretro cores, pcee2 (a PCSX2 fork) is heavy:
+#   * it needs a set of pre-built dependencies (shaderc, etc.) produced by
+#     pcee2-libretro/scripts/build-deps-linux.sh into $CI_PROJECT_DIR/deps,
+#   * it builds with clang + Ninja,
+#   * it is currently Linux x86_64 + Vulkan only and flagged experimental
+#     (see pcee2-libretro/pcee2_libretro.info).
+# The build flags below mirror .github/workflows/libretro_builds.yml.
+
+##############################################################################
+################################# BOILERPLATE ################################
+##############################################################################
+
+.core-defs:
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+    CORENAME: pcee2
+    # cmake configure args (passed by the libretro cmake template as CORE_ARGS)
+    CORE_ARGS: >-
+      -DENABLE_LIBRETRO=ON
+      -DENABLE_QT_UI=OFF
+      -DENABLE_TESTS=OFF
+      -DDISABLE_ADVANCE_SIMD=ON
+      -DSHADERC_STATIC=ON
+      -DCMAKE_C_COMPILER=clang
+      -DCMAKE_CXX_COMPILER=clang++
+      -DCMAKE_PREFIX_PATH=$CI_PROJECT_DIR/deps
+      -DSHADERC_LIBRARY=$CI_PROJECT_DIR/deps/lib/libshaderc_combined.a
+    # the libretro target name (output: build/bin/pcee2_libretro.so)
+    MAKE_ARGS: pcee2-libretro
+
+include:
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/linux-cmake.yml'
+
+# Build the dependency tree (shaderc, ...) before configuring the core.
+# Runs in the libretro build image; mirrors the GitHub Actions deps step.
+.pcee2-deps-linux: &pcee2-deps-linux
+  - bash pcee2-libretro/scripts/build-deps-linux.sh "$CI_PROJECT_DIR/deps"
+
+stages:
+  - build-prepare
+  - build-shared
+
+##############################################################################
+#################################### STAGES ##################################
+##############################################################################
+
+# Linux 64-bit (x86_64). pcee2 currently targets x86_64 + Vulkan only.
+libretro-build-linux-x64:
+  extends:
+    - .libretro-linux-cmake-x86_64
+    - .core-defs
+  before_script:
+    - *pcee2-deps-linux
