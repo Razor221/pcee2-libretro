@@ -36,6 +36,21 @@ include:
   - project: 'libretro-infrastructure/ci-templates'
     file: '/linux-cmake.yml'
 
+# Prepare the toolchain the libretro build images don't ship with:
+#  * clang: PCSX2 only supports Clang/MSVC (cmake/Pcsx2Utils.cmake); the aarch64
+#    image has no clang, and CORE_ARGS forces -DCMAKE_C_COMPILER=clang.
+#  * CMake >= 3.22.1: shaderc requires it, but the x86_64 image ships 3.20.x and
+#    apt would still be too old, so drop a current CMake into PATH.
+# This PATH/env is exported in before_script and so also applies to the core
+# build step (script) that the libretro cmake template runs afterwards.
+.pcee2-setup-linux: &pcee2-setup-linux
+  - apt-get update && apt-get install -y --no-install-recommends clang curl ca-certificates
+  - CMAKE_VER=3.29.6
+  - curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VER}/cmake-${CMAKE_VER}-linux-$(uname -m).tar.gz" -o /tmp/cmake.tar.gz
+  - mkdir -p /opt/cmake && tar -xzf /tmp/cmake.tar.gz -C /opt/cmake --strip-components=1
+  - export PATH="/opt/cmake/bin:$PATH"
+  - cmake --version && clang --version
+
 # Build the dependency tree (shaderc, ...) before configuring the core.
 # Runs in the libretro build image; mirrors the GitHub Actions deps step.
 .pcee2-deps-linux: &pcee2-deps-linux
@@ -55,6 +70,7 @@ libretro-build-linux-x64:
     - .libretro-linux-cmake-x86_64
     - .core-defs
   before_script:
+    - *pcee2-setup-linux
     - *pcee2-deps-linux
 
 # Linux ARM 64-bit (aarch64). pcee2 ships aarch64 builds; the buildbot
@@ -64,4 +80,5 @@ libretro-build-linux-aarch64:
     - .libretro-linux-cmake-aarch64
     - .core-defs
   before_script:
+    - *pcee2-setup-linux
     - *pcee2-deps-linux
