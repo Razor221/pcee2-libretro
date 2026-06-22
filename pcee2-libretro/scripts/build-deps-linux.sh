@@ -14,6 +14,7 @@ PREFIX=$(realpath "$1")
 NPROCS="$(getconf _NPROCESSORS_ONLN)"
 
 SDL=release-3.4.10
+FREETYPE=VER-2-14-3
 PLUTOVG=v1.3.2
 PLUTOSVG=v0.0.7
 RAPIDYAML=v0.12.1
@@ -31,6 +32,18 @@ cmake -S sdl3 -B sdl3/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 	-DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
 cmake --build sdl3/build --parallel "$NPROCS"
 cmake --install sdl3/build
+
+# FreeType: the libretro build image ships an old FreeType (e.g. 2.8.1), but
+# pcee2 needs >= 2.10 (COLRv0 emoji) and plutosvg's FreeType integration needs
+# the OT-SVG API from >= 2.12. Build a current one into the prefix so both
+# plutosvg and the core find it (via CMAKE_PREFIX_PATH=$CI_PROJECT_DIR/deps).
+clone https://github.com/freetype/freetype freetype "$FREETYPE"
+cmake -S freetype -B freetype/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+	-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+	-DBUILD_SHARED_LIBS=OFF -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BROTLI=ON \
+	-DFT_DISABLE_PNG=ON -DFT_DISABLE_ZLIB=ON
+cmake --build freetype/build --parallel "$NPROCS"
+cmake --install freetype/build
 
 clone https://github.com/sammycage/plutovg plutovg "$PLUTOVG"
 cmake -S plutovg -B plutovg/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
