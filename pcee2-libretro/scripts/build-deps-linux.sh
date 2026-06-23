@@ -41,7 +41,7 @@ clone https://github.com/freetype/freetype freetype "$FREETYPE"
 cmake -S freetype -B freetype/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 	-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
 	-DBUILD_SHARED_LIBS=OFF -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BROTLI=ON \
-	-DFT_DISABLE_PNG=ON -DFT_DISABLE_ZLIB=ON
+	-DFT_DISABLE_PNG=ON -DFT_DISABLE_ZLIB=ON -DFT_DISABLE_BZIP2=ON
 cmake --build freetype/build --parallel "$NPROCS"
 cmake --install freetype/build
 
