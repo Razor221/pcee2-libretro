@@ -1,6 +1,6 @@
-add_library(pcee2-libretro SHARED)
+add_library(pcee2_libretro SHARED)
 
-set_target_properties(pcee2-libretro PROPERTIES
+set_target_properties(pcee2_libretro PROPERTIES
 	OUTPUT_NAME "pcee2_libretro"
 	PREFIX ""
 	RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
@@ -8,23 +8,23 @@ set_target_properties(pcee2-libretro PROPERTIES
 )
 
 if (PACKAGE_MODE)
-	install(TARGETS pcee2-libretro DESTINATION ${CMAKE_INSTALL_LIBDIR})
+	install(TARGETS pcee2_libretro DESTINATION ${CMAKE_INSTALL_LIBDIR})
 else()
-	install(TARGETS pcee2-libretro DESTINATION ${CMAKE_SOURCE_DIR}/bin)
+	install(TARGETS pcee2_libretro DESTINATION ${CMAKE_SOURCE_DIR}/bin)
 endif()
 
-target_sources(pcee2-libretro PRIVATE
+target_sources(pcee2_libretro PRIVATE
 	Libretro.cpp
 	libretro.h
 )
 
-target_include_directories(pcee2-libretro PRIVATE
+target_include_directories(pcee2_libretro PRIVATE
 	"${CMAKE_CURRENT_SOURCE_DIR}"
 	"${CMAKE_BINARY_DIR}/common/include"
 	"${CMAKE_SOURCE_DIR}/pcsx2"
 )
 
-target_link_libraries(pcee2-libretro PRIVATE
+target_link_libraries(pcee2_libretro PRIVATE
 	PCSX2_FLAGS
 	PCSX2
 )
@@ -32,5 +32,5 @@ target_link_libraries(pcee2-libretro PRIVATE
 # undefined symbols in a core otherwise surface only when the frontend loads
 # it ("symbol lookup error" at runtime) - fail the link instead
 if(UNIX AND NOT APPLE)
-	target_link_options(pcee2-libretro PRIVATE "-Wl,--no-undefined")
+	target_link_options(pcee2_libretro PRIVATE "-Wl,--no-undefined")
 endif()
