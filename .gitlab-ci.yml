@@ -48,13 +48,17 @@ include:
 .pcee2-setup-linux: &pcee2-setup-linux
   - export DEBIAN_FRONTEND=noninteractive
   - apt-get update
+  # Package list mirrors .github/workflows/libretro_builds.yml (the authoritative
+  # set), minus clang and libshaderc-dev (we build with gcc and build shaderc /
+  # FreeType from source), plus the basics needed to run the deps build.
   - apt-get install -y --no-install-recommends
       git ca-certificates curl build-essential cmake ninja-build python3 pkg-config extra-cmake-modules
-      libpng-dev libjpeg-turbo8-dev libwebp-dev liblz4-dev libzstd-dev zlib1g-dev
-      libcurl4-openssl-dev libpcap-dev libfontconfig1-dev libdbus-1-dev libudev-dev
-      libasound2-dev libpulse-dev
-      libx11-dev libxext-dev libxrandr-dev libxi-dev
-      libgl1-mesa-dev libegl1-mesa-dev libwayland-dev libwayland-egl-backend-dev libxkbcommon-dev
+      liblz4-dev libwebp-dev libcurl4-openssl-dev libpcap-dev libfontconfig-dev
+      libudev-dev libx11-dev libxrandr-dev libxext-dev libwayland-dev libegl-dev libdbus-1-dev
+      libjpeg-turbo8-dev libpng-dev zlib1g-dev libzstd-dev libdrm-dev libxkbcommon-dev
+      libpipewire-0.3-dev libpulse-dev libasound2-dev
+      libxcursor-dev libxi-dev libxinerama-dev libxfixes-dev libxrender-dev
+      libxss-dev libxtst-dev libgl1-mesa-dev libdecor-0-dev libgbm-dev
   - cmake --version && gcc --version
 
 # Build the dependency tree (shaderc, ...) before configuring the core.
