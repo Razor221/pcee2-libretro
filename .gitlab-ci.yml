@@ -52,6 +52,7 @@ include:
       git ca-certificates curl build-essential cmake ninja-build python3 pkg-config extra-cmake-modules
       libpng-dev libjpeg-turbo8-dev libwebp-dev liblz4-dev libzstd-dev zlib1g-dev
       libcurl4-openssl-dev libpcap-dev libfontconfig1-dev libdbus-1-dev libudev-dev
+      libasound2-dev libpulse-dev
       libx11-dev libxext-dev libxrandr-dev libxi-dev
       libgl1-mesa-dev libegl1-mesa-dev libwayland-dev libwayland-egl-backend-dev libxkbcommon-dev
   - cmake --version && gcc --version
