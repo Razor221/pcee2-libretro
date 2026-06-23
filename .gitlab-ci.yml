@@ -19,14 +19,16 @@
     GIT_SUBMODULE_STRATEGY: recursive
     CORENAME: pcee2
     # cmake configure args (passed by the libretro cmake template as CORE_ARGS)
+    # NOTE: PCSX2 officially supports only Clang/MSVC, but the libretro build
+    # images ship ancient apt clang (3.8 on xenial / 6.0 on bionic) with no C++20
+    # and too old a glibc to drop in a modern clang. The images' native gcc9 is
+    # the only C++20-capable compiler here, so build with it (no clang override).
     CORE_ARGS: >-
       -DENABLE_LIBRETRO=ON
       -DENABLE_QT_UI=OFF
       -DENABLE_TESTS=OFF
       -DDISABLE_ADVANCE_SIMD=ON
       -DSHADERC_STATIC=ON
-      -DCMAKE_C_COMPILER=clang
-      -DCMAKE_CXX_COMPILER=clang++
       -DCMAKE_PREFIX_PATH=$CI_PROJECT_DIR/deps
       -DSHADERC_LIBRARY=$CI_PROJECT_DIR/deps/lib/libshaderc_combined.a
     # the libretro target name (output: build/bin/pcee2_libretro.so)
@@ -36,20 +38,16 @@ include:
   - project: 'libretro-infrastructure/ci-templates'
     file: '/linux-cmake.yml'
 
-# Prepare the toolchain the libretro build images don't ship with:
-#  * clang: PCSX2 only supports Clang/MSVC (cmake/Pcsx2Utils.cmake); the aarch64
-#    image has no clang, and CORE_ARGS forces -DCMAKE_C_COMPILER=clang.
-#  * CMake >= 3.22.1: shaderc requires it, but the x86_64 image ships 3.20.x and
-#    apt would still be too old, so drop a current CMake into PATH.
-# This PATH/env is exported in before_script and so also applies to the core
-# build step (script) that the libretro cmake template runs afterwards.
+# shaderc requires CMake >= 3.22.1, but the libretro build images ship 3.20.x
+# (and apt would still be too old). Drop a current CMake into PATH; the prebuilt
+# binary runs fine even on the old image's glibc. Exported in before_script, so
+# it also applies to the core build step (script) the cmake template runs after.
 .pcee2-setup-linux: &pcee2-setup-linux
-  - apt-get update && apt-get install -y --no-install-recommends clang curl ca-certificates
   - CMAKE_VER=3.29.6
   - curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VER}/cmake-${CMAKE_VER}-linux-$(uname -m).tar.gz" -o /tmp/cmake.tar.gz
   - mkdir -p /opt/cmake && tar -xzf /tmp/cmake.tar.gz -C /opt/cmake --strip-components=1
   - export PATH="/opt/cmake/bin:$PATH"
-  - cmake --version && clang --version
+  - cmake --version
 
 # Build the dependency tree (shaderc, ...) before configuring the core.
 # Runs in the libretro build image; mirrors the GitHub Actions deps step.
