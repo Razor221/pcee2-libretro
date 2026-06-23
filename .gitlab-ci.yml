@@ -72,6 +72,12 @@ include:
 .pcee2-deps-linux: &pcee2-deps-linux
   - bash pcee2-libretro/scripts/build-deps-linux.sh "$CI_PROJECT_DIR/deps"
 
+# Windows deps: same script, but cross-compiled for MinGW via the MXE cmake
+# wrapper the libretro Windows image provides.
+.pcee2-deps-win: &pcee2-deps-win
+  - export CMAKE=x86_64-w64-mingw32.static-cmake
+  - bash pcee2-libretro/scripts/build-deps-linux.sh "$CI_PROJECT_DIR/deps"
+
 stages:
   - build-prepare
   - build-shared
@@ -100,3 +106,13 @@ libretro-build-linux-aarch64:
   before_script:
     - *pcee2-setup-linux
     - *pcee2-deps-linux
+
+# Windows 64-bit (MinGW cross-compile via the libretro MXE image). NOTE: pcee2
+# is a PCSX2 fork and PCSX2 officially targets MSVC/clang-cl, so this MinGW
+# attempt may not build PCSX2; tracked here to see how far it gets.
+libretro-build-windows-x64:
+  extends:
+    - .libretro-windows-cmake-x86_64
+    - .core-defs
+  before_script:
+    - *pcee2-deps-win
