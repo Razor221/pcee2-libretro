@@ -14,8 +14,10 @@ PREFIX=$(realpath "$1")
 NPROCS="$(getconf _NPROCESSORS_ONLN)"
 
 # Allow a cross-compiling CMake wrapper (e.g. the MXE x86_64-w64-mingw32.static-cmake
-# used by the libretro Windows job) to be substituted for the host cmake.
+# used by the libretro Windows job) to be substituted for the host cmake. HOST is
+# the autoconf target triple for the non-CMake deps (libbacktrace); empty = native.
 CMAKE="${CMAKE:-cmake}"
+HOST="${HOST:-}"
 
 SDL=release-3.4.10
 FREETYPE=VER-2-14-3
@@ -72,7 +74,7 @@ clone https://github.com/biojppm/rapidyaml rapidyaml "$RAPIDYAML"
 "$CMAKE" --install rapidyaml/build
 
 clone https://github.com/ianlancetaylor/libbacktrace libbacktrace master
-(cd libbacktrace && ./configure --prefix="$PREFIX" --with-pic && make -j"$NPROCS" && make install)
+(cd libbacktrace && ./configure --prefix="$PREFIX" --with-pic ${HOST:+--host="$HOST"} && make -j"$NPROCS" && make install)
 
 # shaderc: static combined, linked straight into the core. Distro
 # libshaderc_combined.a packages aren't actually self-contained (Ubuntu's

@@ -73,9 +73,11 @@ include:
   - bash pcee2-libretro/scripts/build-deps-linux.sh "$CI_PROJECT_DIR/deps"
 
 # Windows deps: same script, but cross-compiled for MinGW via the MXE cmake
-# wrapper the libretro Windows image provides.
+# wrapper the libretro Windows image provides. CMAKE drives the CMake deps and
+# HOST the autoconf target triple (libbacktrace).
 .pcee2-deps-win: &pcee2-deps-win
   - export CMAKE=x86_64-w64-mingw32.static-cmake
+  - export HOST=x86_64-w64-mingw32
   - bash pcee2-libretro/scripts/build-deps-linux.sh "$CI_PROJECT_DIR/deps"
 
 stages:
