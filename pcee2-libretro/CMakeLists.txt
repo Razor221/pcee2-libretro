@@ -13,6 +13,13 @@ else()
 	install(TARGETS pcee2_libretro DESTINATION ${CMAKE_SOURCE_DIR}/bin)
 endif()
 
+# The libretro buildbot expects the .so directly in the build dir root (it does
+# `mv $BUILD_DIR/pcee2_libretro.so ...`), while the GitHub/standalone packaging
+# uses bin/. Copy it to the build root too so both layouts work.
+add_custom_command(TARGET pcee2_libretro POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy
+		$<TARGET_FILE:pcee2_libretro> ${CMAKE_BINARY_DIR}/pcee2_libretro.so)
+
 target_sources(pcee2_libretro PRIVATE
 	Libretro.cpp
 	libretro.h
