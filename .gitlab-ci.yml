@@ -48,7 +48,12 @@ include:
 .pcee2-setup-linux: &pcee2-setup-linux
   - export DEBIAN_FRONTEND=noninteractive
   - apt-get update
-  - apt-get install -y --no-install-recommends git ca-certificates curl build-essential cmake ninja-build python3 pkg-config libpng-dev libjpeg-turbo8-dev libwebp-dev liblz4-dev libzstd-dev zlib1g-dev libx11-dev libgl1-mesa-dev libegl1-mesa-dev libwayland-dev libxkbcommon-dev
+  - apt-get install -y --no-install-recommends
+      git ca-certificates curl build-essential cmake ninja-build python3 pkg-config extra-cmake-modules
+      libpng-dev libjpeg-turbo8-dev libwebp-dev liblz4-dev libzstd-dev zlib1g-dev
+      libcurl4-openssl-dev libpcap-dev libfontconfig1-dev libdbus-1-dev libudev-dev
+      libx11-dev libxext-dev libxrandr-dev libxi-dev
+      libgl1-mesa-dev libegl1-mesa-dev libwayland-dev libwayland-egl-backend-dev libxkbcommon-dev
   - cmake --version && gcc --version
 
 # Build the dependency tree (shaderc, ...) before configuring the core.
