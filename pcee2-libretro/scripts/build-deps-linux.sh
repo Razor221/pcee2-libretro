@@ -91,4 +91,47 @@ mkdir -p "$PREFIX/lib" "$PREFIX/include"
 cp shaderc/b/libshaderc/libshaderc_combined.a "$PREFIX/lib/"
 cp -r shaderc/libshaderc/include/shaderc "$PREFIX/include/"
 
+# Windows (MinGW) only: the libretro MXE image lacks several system libraries
+# that the Linux jobs get from Ubuntu apt (JPEG, Zstd, LZ4, WebP — PNG/ZLIB are
+# present in MXE). Build them from source into the prefix for the cross-build.
+# Guarded by HOST, which is only set for the Windows cross job, so the Linux
+# x64/aarch64 jobs keep using their apt copies and don't pay for these builds.
+if [ -n "$HOST" ]; then
+	JPEGTURBO=3.1.3
+	ZSTD=v1.5.6
+	LZ4=v1.10.0
+	WEBP=v1.6.0
+
+	clone https://github.com/libjpeg-turbo/libjpeg-turbo libjpeg-turbo "$JPEGTURBO"
+	"$CMAKE" -S libjpeg-turbo -B libjpeg-turbo/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+		-DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_SIMD=OFF
+	"$CMAKE" --build libjpeg-turbo/build --parallel "$NPROCS"
+	"$CMAKE" --install libjpeg-turbo/build
+
+	clone https://github.com/facebook/zstd zstd "$ZSTD"
+	"$CMAKE" -S zstd/build/cmake -B zstd/build/cmake/b -G Ninja -DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+		-DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=OFF
+	"$CMAKE" --build zstd/build/cmake/b --parallel "$NPROCS"
+	"$CMAKE" --install zstd/build/cmake/b
+
+	clone https://github.com/lz4/lz4 lz4 "$LZ4"
+	"$CMAKE" -S lz4/build/cmake -B lz4/build/cmake/b -G Ninja -DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+		-DBUILD_SHARED_LIBS=OFF -DLZ4_BUILD_CLI=OFF -DLZ4_BUILD_LEGACY_LZ4C=OFF
+	"$CMAKE" --build lz4/build/cmake/b --parallel "$NPROCS"
+	"$CMAKE" --install lz4/build/cmake/b
+
+	clone https://github.com/webmproject/libwebp libwebp "$WEBP"
+	"$CMAKE" -S libwebp -B libwebp/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+		-DBUILD_SHARED_LIBS=OFF \
+		-DWEBP_BUILD_ANIM_UTILS=OFF -DWEBP_BUILD_CWEBP=OFF -DWEBP_BUILD_DWEBP=OFF \
+		-DWEBP_BUILD_GIF2WEBP=OFF -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF \
+		-DWEBP_BUILD_WEBPINFO=OFF -DWEBP_BUILD_WEBPMUX=OFF -DWEBP_BUILD_EXTRAS=OFF
+	"$CMAKE" --build libwebp/build --parallel "$NPROCS"
+	"$CMAKE" --install libwebp/build
+fi
+
 echo "Dependencies installed to $PREFIX"
