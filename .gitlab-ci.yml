@@ -31,6 +31,9 @@
       -DSHADERC_STATIC=ON
       -DCMAKE_PREFIX_PATH=$CI_PROJECT_DIR/deps
       -DSHADERC_LIBRARY=$CI_PROJECT_DIR/deps/lib/libshaderc_combined.a
+      -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH
+      -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH
+      -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
     # the libretro target name (output: build/bin/pcee2_libretro.so)
     MAKE_ARGS: pcee2-libretro
 
