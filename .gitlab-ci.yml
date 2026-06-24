@@ -82,6 +82,9 @@ include:
 # runtime out of the core's NEEDED list. SDL3/FreeType/shaderc/etc. are still
 # built from source by build-deps-linux.sh.
 .pcee2-setup-musl: &pcee2-setup-musl
+  # The runner's shell PATH lacks /sbin, where Alpine's apk lives (apt-get on the
+  # glibc jobs is in /usr/bin, so it was unaffected); add it so apk is found.
+  - export PATH="/sbin:/usr/sbin:$PATH"
   - apk update
   - apk add --no-cache
       bash git ca-certificates curl build-base cmake samurai python3 pkgconf extra-cmake-modules linux-headers
