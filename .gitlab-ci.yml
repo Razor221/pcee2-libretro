@@ -37,6 +37,11 @@
 include:
   - project: 'libretro-infrastructure/ci-templates'
     file: '/linux-cmake.yml'
+  # Windows MinGW cross-compile template; provides .libretro-windows-cmake-x86_64
+  # used by libretro-build-windows-x64 below. Without this include the whole
+  # pipeline fails at config time (undefined `extends` target).
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/windows-cmake-mingw.yml'
 
 # The stock libretro build images are ancient Ubuntu (xenial/bionic): their
 # CMake (3.20), gcc, and system libs (PNG 1.2, zstd, webp, lz4) are far too old
@@ -78,6 +83,12 @@ include:
 .pcee2-deps-win: &pcee2-deps-win
   - export CMAKE=x86_64-w64-mingw32.static-cmake
   - export HOST=x86_64-w64-mingw32
+  # The windows-cmake template's before_script (which sets NUMPROC=nproc/5) is
+  # replaced by this one, so set NUMPROC ourselves; cap by RAM as on Linux to
+  # avoid OOM-killing the cross-gcc on the big PCSX2 translation units.
+  - NUMPROC=$(nproc); MEMGB=$(awk '/MemTotal/{print int($2/1024/1024)}' /proc/meminfo)
+  - CAP=$((MEMGB/2)); [ "$CAP" -lt 1 ] && CAP=1; [ "$NUMPROC" -gt "$CAP" ] && NUMPROC=$CAP
+  - export NUMPROC; echo "NUMPROC=$NUMPROC (cores=$(nproc), mem=${MEMGB}GB)"
   - bash pcee2-libretro/scripts/build-deps-linux.sh "$CI_PROJECT_DIR/deps"
 
 stages:
