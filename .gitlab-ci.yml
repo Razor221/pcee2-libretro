@@ -75,6 +75,28 @@ include:
   - CAP=$((MEMGB/2)); [ "$CAP" -lt 1 ] && CAP=1; [ "$NUMPROC" -gt "$CAP" ] && NUMPROC=$CAP
   - export NUMPROC; echo "NUMPROC=$NUMPROC (cores=$(nproc), mem=${MEMGB}GB)"
 
+# musl (Alpine) aarch64 setup. The glibc aarch64 build above won't load on
+# musl distros (Alpine, postmarketOS), so this builds the same core in an Alpine
+# image with apk. The package set is the apt list above mapped to apk (mesa-dev
+# covers the EGL/GL/gbm headers). -static-libstdc++/-static-libgcc keeps the GCC
+# runtime out of the core's NEEDED list. SDL3/FreeType/shaderc/etc. are still
+# built from source by build-deps-linux.sh.
+.pcee2-setup-musl: &pcee2-setup-musl
+  - apk update
+  - apk add --no-cache
+      bash git ca-certificates curl build-base cmake samurai python3 pkgconf extra-cmake-modules linux-headers
+      lz4-dev libwebp-dev curl-dev libpcap-dev fontconfig-dev eudev-dev
+      libx11-dev libxrandr-dev libxext-dev wayland-dev mesa-dev dbus-dev
+      libjpeg-turbo-dev libpng-dev zlib-dev zstd-dev libdrm-dev libxkbcommon-dev
+      pipewire-dev pulseaudio-dev alsa-lib-dev
+      libxcursor-dev libxi-dev libxinerama-dev libxfixes-dev libxrender-dev
+      libxscrnsaver-dev libxtst-dev libdecor-dev
+  - cmake --version && gcc --version
+  - export LDFLAGS="-static-libstdc++ -static-libgcc"
+  - NUMPROC=$(nproc); MEMGB=$(awk '/MemTotal/{print int($2/1024/1024)}' /proc/meminfo)
+  - CAP=$((MEMGB/2)); [ "$CAP" -lt 1 ] && CAP=1; [ "$NUMPROC" -gt "$CAP" ] && NUMPROC=$CAP
+  - export NUMPROC; echo "NUMPROC=$NUMPROC (cores=$(nproc), mem=${MEMGB}GB)"
+
 # Build the dependency tree (shaderc, ...) before configuring the core.
 # Runs in the libretro build image; mirrors the GitHub Actions deps step.
 .pcee2-deps-linux: &pcee2-deps-linux
@@ -121,6 +143,17 @@ libretro-build-linux-aarch64:
     - .core-defs
   before_script:
     - *pcee2-setup-linux
+    - *pcee2-deps-linux
+
+# Linux ARM 64-bit (aarch64), musl/Alpine. Produces a core that loads on musl
+# distros (Alpine, postmarketOS) where the glibc aarch64 build cannot.
+libretro-build-linux-aarch64-musl:
+  image: alpine:3.21
+  extends:
+    - .libretro-linux-cmake-aarch64
+    - .core-defs
+  before_script:
+    - *pcee2-setup-musl
     - *pcee2-deps-linux
 
 # Windows 64-bit (MinGW cross-compile via the libretro MXE image). NOTE: pcee2
