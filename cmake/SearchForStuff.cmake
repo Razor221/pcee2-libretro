@@ -11,7 +11,14 @@ find_package(Threads REQUIRED)
 # Avoid it by telling cmake to avoid finding frameworks while we search for libpng.
 set(FIND_FRAMEWORK_BACKUP ${CMAKE_FIND_FRAMEWORK})
 set(CMAKE_FIND_FRAMEWORK NEVER)
-find_package(PNG 1.6.40 REQUIRED)
+# Minimum libpng is 1.6.40 by default; the MinGW cross-build (libretro CI)
+# only has MXE's 1.6.37, so PCSX2_PNG_MIN_VERSION lets that job relax it.
+if(DEFINED ENV{PCSX2_PNG_MIN_VERSION})
+	set(PCSX2_PNG_MIN_VERSION $ENV{PCSX2_PNG_MIN_VERSION})
+else()
+	set(PCSX2_PNG_MIN_VERSION 1.6.40)
+endif()
+find_package(PNG ${PCSX2_PNG_MIN_VERSION} REQUIRED)
 find_package(JPEG REQUIRED) # No version because flatpak uses libjpeg-turbo.
 find_package(ZLIB REQUIRED) # v1.3, but Mac uses the SDK version.
 find_package(Zstd 1.5.5 REQUIRED)

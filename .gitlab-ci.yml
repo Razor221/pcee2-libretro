@@ -124,8 +124,16 @@ libretro-build-linux-aarch64:
 # is a PCSX2 fork and PCSX2 officially targets MSVC/clang-cl, so this MinGW
 # attempt may not build PCSX2; tracked here to see how far it gets.
 libretro-build-windows-x64:
+  # Experimental MinGW cross-build: don't fail the pipeline (x64/aarch64 are the
+  # shipping targets). Still built and visible so we can track how far it gets.
+  allow_failure: true
   extends:
     - .libretro-windows-cmake-x86_64
     - .core-defs
+  variables:
+    # MXE's MinGW toolchain ships libpng 1.6.37; SearchForStuff.cmake's 1.6.40
+    # pin is conservative (PCSX2 only uses libpng for screenshots/textures), so
+    # relax the minimum for this cross-build only. x64/aarch64/Mac keep 1.6.40.
+    PCSX2_PNG_MIN_VERSION: "1.6.37"
   before_script:
     - *pcee2-deps-win
