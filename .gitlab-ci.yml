@@ -43,11 +43,12 @@
 include:
   - project: 'libretro-infrastructure/ci-templates'
     file: '/linux-cmake.yml'
-  # Windows MinGW cross-compile template; provides .libretro-windows-cmake-x86_64
-  # used by libretro-build-windows-x64 below. Without this include the whole
-  # pipeline fails at config time (undefined `extends` target).
+  # Windows: native MSVC 2019 template (provides .libretro-windows-msvc19-cmake-x86_64
+  # used by libretro-build-windows-x64 below). PCSX2 officially targets MSVC, so
+  # this builds with the supported toolchain instead of the old MinGW cross-build.
+  # Modelled on lrps2 (libretro/ps2), whose Windows core builds this way.
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/windows-cmake-mingw.yml'
+    file: '/windows-cmake-msvc19.yml'
 
 # The stock libretro build images are ancient Ubuntu (xenial/bionic): their
 # CMake (3.20), gcc, and system libs (PNG 1.2, zstd, webp, lz4) are far too old
@@ -108,20 +109,6 @@ include:
 .pcee2-deps-linux: &pcee2-deps-linux
   - bash pcee2-libretro/scripts/build-deps-linux.sh "$CI_PROJECT_DIR/deps"
 
-# Windows deps: same script, but cross-compiled for MinGW via the MXE cmake
-# wrapper the libretro Windows image provides. CMAKE drives the CMake deps and
-# HOST the autoconf target triple (libbacktrace).
-.pcee2-deps-win: &pcee2-deps-win
-  - export CMAKE=x86_64-w64-mingw32.static-cmake
-  - export HOST=x86_64-w64-mingw32
-  # The windows-cmake template's before_script (which sets NUMPROC=nproc/5) is
-  # replaced by this one, so set NUMPROC ourselves; cap by RAM as on Linux to
-  # avoid OOM-killing the cross-gcc on the big PCSX2 translation units.
-  - NUMPROC=$(nproc); MEMGB=$(awk '/MemTotal/{print int($2/1024/1024)}' /proc/meminfo)
-  - CAP=$((MEMGB/2)); [ "$CAP" -lt 1 ] && CAP=1; [ "$NUMPROC" -gt "$CAP" ] && NUMPROC=$CAP
-  - export NUMPROC; echo "NUMPROC=$NUMPROC (cores=$(nproc), mem=${MEMGB}GB)"
-  - bash pcee2-libretro/scripts/build-deps-linux.sh "$CI_PROJECT_DIR/deps"
-
 stages:
   - build-prepare
   - build-shared
@@ -162,20 +149,30 @@ libretro-build-linux-aarch64-musl:
     - *pcee2-setup-musl
     - *pcee2-deps-linux
 
-# Windows 64-bit (MinGW cross-compile via the libretro MXE image). NOTE: pcee2
-# is a PCSX2 fork and PCSX2 officially targets MSVC/clang-cl, so this MinGW
-# attempt may not build PCSX2; tracked here to see how far it gets.
+# Windows 64-bit (native MSVC 2019, on the buildbot's msvc2019 runner). PCSX2
+# officially targets MSVC, so unlike the old MinGW cross-build this uses the
+# supported toolchain and PCSX2's vendored 3rdparty (no build-deps-linux.sh and
+# no $CI_PROJECT_DIR/deps prefix). Modelled on lrps2 (libretro/ps2).
 libretro-build-windows-x64:
-  # Experimental MinGW cross-build: don't fail the pipeline (x64/aarch64 are the
-  # shipping targets). Still built and visible so we can track how far it gets.
+  # Still experimental for pcee2 until proven green; keep it from failing the
+  # pipeline (Linux x64/aarch64 are the shipping targets).
   allow_failure: true
   extends:
-    - .libretro-windows-cmake-x86_64
+    - .libretro-windows-msvc19-cmake-x86_64
     - .core-defs
   variables:
-    # MXE's MinGW toolchain ships libpng 1.6.37; SearchForStuff.cmake's 1.6.40
-    # pin is conservative (PCSX2 only uses libpng for screenshots/textures), so
-    # relax the minimum for this cross-build only. x64/aarch64/Mac keep 1.6.40.
-    PCSX2_PNG_MIN_VERSION: "1.6.37"
-  before_script:
-    - *pcee2-deps-win
+    # The shared .core-defs CORE_ARGS targets the Linux deps prefix produced by
+    # build-deps-linux.sh ($CI_PROJECT_DIR/deps), which doesn't exist on the
+    # MSVC build. Override with the MSVC-appropriate flags: keep the
+    # libretro-specific options, drop the Linux/shaderc/find-root deps bits and
+    # let PCSX2's bundled 3rdparty satisfy the dependencies.
+    CORE_ARGS: >-
+      -DCMAKE_BUILD_TYPE=Release
+      -DCMAKE_POLICY_VERSION_MINIMUM=3.18
+      -DENABLE_LIBRETRO=ON
+      -DENABLE_QT_UI=OFF
+      -DENABLE_TESTS=OFF
+      -DDISABLE_ADVANCE_SIMD=ON
+    # MSVC is a multi-config generator; CMakeLists.txt sets RUNTIME_OUTPUT_DIRECTORY
+    # to bin, so the built .dll lands in bin/Release.
+    EXTRA_PATH: bin/Release
