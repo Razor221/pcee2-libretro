@@ -23,6 +23,11 @@
     # images ship ancient apt clang (3.8 on xenial / 6.0 on bionic) with no C++20
     # and too old a glibc to drop in a modern clang. The images' native gcc9 is
     # the only C++20-capable compiler here, so build with it (no clang override).
+    # CMAKE_FIND_ROOT_PATH: the Windows MXE toolchain sets the find-root-path
+    # modes to ONLY in its toolchain file, which shadows any -D...MODE=BOTH we
+    # pass on the command line, so find_package(JPEG/Zstd/...) ignored
+    # CMAKE_PREFIX_PATH=deps. Adding deps to CMAKE_FIND_ROOT_PATH makes it
+    # searched even under ONLY. No-op on Linux (deps is already in PREFIX_PATH).
     CORE_ARGS: >-
       -DENABLE_LIBRETRO=ON
       -DENABLE_QT_UI=OFF
@@ -31,9 +36,7 @@
       -DSHADERC_STATIC=ON
       -DCMAKE_PREFIX_PATH=$CI_PROJECT_DIR/deps
       -DSHADERC_LIBRARY=$CI_PROJECT_DIR/deps/lib/libshaderc_combined.a
-      -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH
-      -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH
-      -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
+      -DCMAKE_FIND_ROOT_PATH=$CI_PROJECT_DIR/deps
     # the libretro target name (output: build/bin/pcee2_libretro.so)
     MAKE_ARGS: pcee2-libretro
 
