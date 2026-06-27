@@ -33,7 +33,7 @@ jobs:
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: deps
           key: linux-libretro-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
@@ -85,7 +85,7 @@ jobs:
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: deps
           key: windows-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-windows.bat') }}
@@ -99,7 +99,7 @@ jobs:
 
       - name: Save Dependencies Cache
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: deps
           key: windows-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-windows.bat') }}
@@ -155,7 +155,7 @@ jobs:
 
       - name: Restore Dependencies Cache
         id: cache-deps
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ~/deps
           key: macos-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh') }}
@@ -167,7 +167,7 @@ jobs:
       # save immediately so a later timeout can't lose the deps build
       - name: Save Dependencies Cache
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ~/deps
           key: macos-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh') }}
@@ -232,6 +232,6 @@ jobs:
           done
 
       - name: Attach to Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v3.0.1
         with:
           files: artifacts/pcee2_libretro-*.zip
