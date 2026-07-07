@@ -5,6 +5,7 @@ on:
     branches:
       - libretro
       - libretro-arm64
+      - "libretro-arm64-*"
     tags:
       - "v*"
   workflow_dispatch:
@@ -16,7 +17,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -34,7 +35,7 @@ jobs:
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: deps
           key: linux-libretro-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
@@ -55,7 +56,7 @@ jobs:
             -DDISABLE_ADVANCE_SIMD=ON
 
       - name: Build Core
-        run: cmake --build build --target pcee2-libretro
+        run: cmake --build build --target pcee2_libretro
 
       - name: Prepare Artifact
         run: |
@@ -63,7 +64,7 @@ jobs:
           cp build/bin/pcee2_libretro.so pcee2-libretro/pcee2_libretro.info artifact/
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pcee2_libretro-linux-x86_64
           path: artifact/*
@@ -113,7 +114,7 @@ jobs:
             -DDISABLE_ADVANCE_SIMD=ON
 
       - name: Build Core
-        run: cmake --build build --target pcee2-libretro
+        run: cmake --build build --target pcee2_libretro
 
       - name: Prepare Artifact
         run: |
@@ -173,7 +174,7 @@ jobs:
             -DDISABLE_ADVANCE_SIMD=ON
 
       - name: Build Core
-        run: cmake --build build --target pcee2-libretro
+        run: cmake --build build --target pcee2_libretro
 
       - name: Verify self-contained (no libSDL3 NEEDED)
         run: |
@@ -251,7 +252,7 @@ jobs:
             -DDISABLE_ADVANCE_SIMD=ON
 
       - name: Build Core
-        run: cmake --build build --target pcee2-libretro
+        run: cmake --build build --target pcee2_libretro
 
       - name: Verify self-contained (no libSDL3 NEEDED)
         run: |
@@ -344,7 +345,7 @@ jobs:
             -DHOST_PAGE_SIZE:STRING=0x4000
 
       - name: Build Core
-        run: cmake --build build --target pcee2-libretro
+        run: cmake --build build --target pcee2_libretro
 
       - name: Verify self-contained (no libSDL3 NEEDED)
         run: |
@@ -383,7 +384,7 @@ jobs:
     timeout-minutes: 150
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -395,7 +396,7 @@ jobs:
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: deps
           key: windows-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-windows.bat') }}
@@ -409,7 +410,7 @@ jobs:
 
       - name: Save Dependencies Cache
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: deps
           key: windows-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-windows.bat') }}
@@ -424,7 +425,7 @@ jobs:
         shell: cmd
         run: |
           call "%VCVARSPATH%" || exit /b
-          cmake --build build --target pcee2-libretro || exit /b
+          cmake --build build --target pcee2_libretro || exit /b
 
       - name: Prepare Artifact
         shell: cmd
@@ -440,7 +441,7 @@ jobs:
           ) > artifact\README.txt
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pcee2_libretro-windows-x64
           path: artifact/*
@@ -452,7 +453,7 @@ jobs:
     timeout-minutes: 320
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -465,7 +466,7 @@ jobs:
 
       - name: Restore Dependencies Cache
         id: cache-deps
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/deps
           key: macos-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh') }}
@@ -477,7 +478,7 @@ jobs:
       # save immediately so a later timeout can't lose the deps build
       - name: Save Dependencies Cache
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/deps
           key: macos-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh') }}
@@ -493,7 +494,7 @@ jobs:
             -DSHADERC_STATIC=ON "-DSHADERC_LIBRARY=$HOME/deps/lib/libshaderc_combined.a"
 
       - name: Build Core
-        run: cmake --build build --target pcee2-libretro --parallel
+        run: cmake --build build --target pcee2_libretro --parallel
 
       - name: Prepare Artifact
         run: |
@@ -516,7 +517,7 @@ jobs:
           ls -la
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pcee2_libretro-macos-x86_64
           path: artifact/*
@@ -536,7 +537,7 @@ jobs:
       contents: write
     steps:
       - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -548,7 +549,7 @@ jobs:
           done
 
       - name: Attach to Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.1
         with:
           prerelease: false
           make_latest: true
