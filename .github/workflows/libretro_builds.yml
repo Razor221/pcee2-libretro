@@ -75,7 +75,7 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -93,7 +93,7 @@ jobs:
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: deps
           key: linux-arm64-libretro-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
@@ -122,7 +122,7 @@ jobs:
           cp build/bin/pcee2_libretro.so pcee2-libretro/pcee2_libretro.info artifact/
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pcee2_libretro-linux-aarch64
           path: artifact/*
@@ -133,7 +133,7 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -151,7 +151,7 @@ jobs:
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: deps
           key: linux-arm64-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
@@ -191,7 +191,7 @@ jobs:
           cp build/bin/pcee2_libretro.so pcee2-libretro/pcee2_libretro.info artifact/
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pcee2_libretro-linux-aarch64-isztl-static
           path: artifact/*
@@ -222,13 +222,13 @@ jobs:
             libxss-dev libxtst-dev libgl1-mesa-dev libdecor-0-dev libgbm-dev
 
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: deps
           key: linux-arm64-bookworm-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
@@ -280,7 +280,7 @@ jobs:
           cp build/bin/pcee2_libretro.so pcee2-libretro/pcee2_libretro.info artifact/
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pcee2_libretro-linux-aarch64-bookworm-vk
           path: artifact/*
@@ -314,13 +314,13 @@ jobs:
             libxss-dev libxtst-dev libgl1-mesa-dev libdecor-0-dev libgbm-dev
 
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: deps
           key: linux-arm64-bookworm-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
@@ -373,7 +373,7 @@ jobs:
           cp build/bin/pcee2_libretro.so pcee2-libretro/pcee2_libretro.info artifact/
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pcee2_libretro-linux-aarch64-bookworm-16k-vk
           path: artifact/*
