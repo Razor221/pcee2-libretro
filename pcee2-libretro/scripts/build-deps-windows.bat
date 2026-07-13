@@ -22,6 +22,7 @@ set SDL=release-3.4.10
 set PLUTOVG=v1.3.2
 set PLUTOSVG=v0.0.7
 set RAPIDYAML=v0.12.1
+set DXHEADERS=v1.618.2
 set SHADERC=v2026.2
 
 set "COMMON=-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=%INSTALLDIR% -DCMAKE_PREFIX_PATH=%INSTALLDIR% -DBUILD_SHARED_LIBS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -G Ninja"
@@ -91,6 +92,11 @@ echo === rapidyaml %RAPIDYAML% ===
 if not exist rapidyaml git clone --depth 1 -b %RAPIDYAML% --recursive https://github.com/biojppm/rapidyaml || exit /b 1
 cmake -S rapidyaml -B rapidyaml\b %COMMON% || exit /b 1
 cmake --build rapidyaml\b --target install || exit /b 1
+
+echo === DirectX-Headers %DXHEADERS% ===
+if not exist DirectX-Headers git clone --depth 1 -b %DXHEADERS% https://github.com/microsoft/DirectX-Headers || exit /b 1
+cmake -S DirectX-Headers -B DirectX-Headers\b %COMMON% -DDXHEADERS_BUILD_TEST=OFF -DDXHEADERS_BUILD_GOOGLE_TEST=OFF -DDXHEADERS_INSTALL=ON || exit /b 1
+cmake --build DirectX-Headers\b --target install || exit /b 1
 
 echo === shaderc %SHADERC% (static combined, linked into the core) ===
 if not exist shaderc git clone --depth 1 -b %SHADERC% https://github.com/google/shaderc || exit /b 1
