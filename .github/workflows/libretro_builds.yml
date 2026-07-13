@@ -524,10 +524,10 @@ jobs:
 
   release:
     name: "Attach Release Assets"
-    # Publish as long as the Linux core built. The Windows job is allowed to
-    # fail without blocking the release (it currently breaks at Generate CMake,
-    # an MSVC-only issue) so the Linux/aarch64 cores still ship.
-    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && needs.build_linux.result == 'success' }}
+    # A release ships the x86_64 Linux and the Windows core, so both must build;
+    # a failure in either blocks publishing rather than quietly shipping a
+    # release that is missing a platform.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && needs.build_linux.result == 'success' && needs.build_windows.result == 'success' }}
     # bookworm jobs are in needs (not in the if) purely to order the release
     # after them, so their aarch64 cores exist when artifacts are downloaded;
     # !cancelled() means a bookworm failure still lets the release run.
