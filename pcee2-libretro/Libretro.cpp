@@ -782,6 +782,17 @@ void LibretroHost::ReadCoreOptions(bool startup)
 	s_aspect_bits.store(std::bit_cast<u32>(aspect_value), std::memory_order_release);
 
 	// performance
+	// PCEE2_OSD=1: performance overlay (fps/speed + EE/GS/VU thread loads +
+	// GPU usage) for diagnosing whether a heavy scene is CPU- or GPU-bound.
+	if (std::getenv("PCEE2_OSD"))
+	{
+		s_settings_interface.SetBoolValue("EmuCore/GS", "OsdShowSpeed", true);
+		s_settings_interface.SetBoolValue("EmuCore/GS", "OsdShowFPS", true);
+		s_settings_interface.SetBoolValue("EmuCore/GS", "OsdShowResolution", true);
+		s_settings_interface.SetBoolValue("EmuCore/GS", "OsdShowCPU", true);
+		s_settings_interface.SetBoolValue("EmuCore/GS", "OsdShowGPU", true);
+	}
+
 	// MTVU: VU1 on its own thread — the single biggest speedup on multi-core
 	// ARM (pcee2's base defaults it off; yaps2's libretro core defaults it on).
 	s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vuThread",
