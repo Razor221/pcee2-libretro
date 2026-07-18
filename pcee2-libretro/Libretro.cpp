@@ -583,6 +583,14 @@ void LibretroHost::RegisterCoreOptions()
 			"Enable built-in progressive-output patches where available. Best applied before starting a game.", nullptr,
 			"patches", {{"disabled", nullptr}, {"enabled", nullptr}, {nullptr, nullptr}}, "disabled"},
 		// performance
+		{"pcsx2_mtvu", "MTVU (Multi-Threaded VU1)", nullptr,
+			"Runs VU1 on its own thread. Large speedup on multi-core CPUs; a small number of games hang with it.",
+			nullptr, "performance",
+			{{"enabled", nullptr}, {"disabled", nullptr}, {nullptr, nullptr}}, "enabled"},
+		{"pcsx2_instant_vu1", "Instant VU1", nullptr,
+			"Runs VU1 to completion immediately (ignored while MTVU is enabled). Usually a speedup.",
+			nullptr, "performance",
+			{{"enabled", nullptr}, {"disabled", nullptr}, {nullptr, nullptr}}, "enabled"},
 		{"pcsx2_ee_cycle_rate", "EE Cycle Rate", nullptr,
 			"Underclock or overclock the emulated Emotion Engine. Default 100%. May break games.", nullptr,
 			"performance",
@@ -774,6 +782,12 @@ void LibretroHost::ReadCoreOptions(bool startup)
 	s_aspect_bits.store(std::bit_cast<u32>(aspect_value), std::memory_order_release);
 
 	// performance
+	// MTVU: VU1 on its own thread — the single biggest speedup on multi-core
+	// ARM (pcee2's base defaults it off; yaps2's libretro core defaults it on).
+	s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vuThread",
+		std::strcmp(get_option("pcsx2_mtvu", "enabled"), "enabled") == 0);
+	s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vu1Instant",
+		std::strcmp(get_option("pcsx2_instant_vu1", "enabled"), "enabled") == 0);
 	s_settings_interface.SetIntValue("EmuCore/Speedhacks", "EECycleRate", get_int_option("pcsx2_ee_cycle_rate", "0"));
 	s_settings_interface.SetIntValue("EmuCore/Speedhacks", "EECycleSkip", get_int_option("pcsx2_ee_cycle_skip", "0"));
 
