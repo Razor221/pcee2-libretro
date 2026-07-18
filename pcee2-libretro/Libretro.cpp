@@ -19,6 +19,7 @@
 #include <atomic>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
@@ -1420,8 +1421,10 @@ static void OutputAudio()
 // (PAL 50Hz detection after boot, PSX-mode 44.1kHz, upscale option, ...).
 static void UpdateAVInfoIfChanged()
 {
-	static u32 last_fps_bits = 0;
-	static u32 last_sample_rate = 0;
+	// Initialized to what retro_get_system_av_info reported at startup, so the
+	// first VM report only announces when it genuinely differs.
+	static u32 last_fps_bits = 0; // 0 = "still the 59.94f startup default"
+	static u32 last_sample_rate = SAMPLE_RATE;
 	static u32 last_width = 0;
 	static u32 last_height = 0;
 	static u32 last_aspect_bits = 0;
@@ -1432,8 +1435,17 @@ static void UpdateAVInfoIfChanged()
 	const u32 height = s_out_height.load(std::memory_order_acquire);
 	const u32 aspect_bits = s_aspect_bits.load(std::memory_order_acquire);
 
-	if (fps_bits == last_fps_bits && sample_rate == last_sample_rate && width == last_width &&
-		height == last_height && aspect_bits == last_aspect_bits)
+	// SET_SYSTEM_AV_INFO makes the frontend reinit the whole video driver
+	// (context_destroy + re-negotiation on the HW-render path) — only worth it
+	// for a real timing change. In HW-render mode geometry/aspect are handled
+	// per-frame via SET_GEOMETRY (no reinit), so ignore them here. The fps
+	// compare needs a tolerance: NTSC reports 59.94005994Hz vs the 59.94f
+	// startup default, and that 0.00006Hz delta must not trigger a reinit.
+	const float fps = fps_bits ? std::bit_cast<float>(fps_bits) : 0.0f;
+	const float last_fps = last_fps_bits ? std::bit_cast<float>(last_fps_bits) : 59.94f;
+	const bool timing_changed = std::abs(fps - last_fps) > 0.25f || sample_rate != last_sample_rate;
+	const bool geometry_changed = width != last_width || height != last_height || aspect_bits != last_aspect_bits;
+	if (!timing_changed && (s_hw_render_vulkan || !geometry_changed))
 		return;
 
 	// don't announce anything until the VM has reported a real frame rate
@@ -1445,6 +1457,18 @@ static void UpdateAVInfoIfChanged()
 	last_width = width;
 	last_height = height;
 	last_aspect_bits = aspect_bits;
+
+	// The frontend's video reinit runs inside this environment call while the
+	// GS thread may still be chewing queued work that submits to the shared
+	// Vulkan queue — drain it first so the reinit doesn't race those submits.
+	// (The CPU thread is parked here: retro_run hasn't posted its run token.)
+	if (s_hw_render_vulkan && MTGS::IsOpen())
+	{
+		std::atomic_bool gs_drained{false};
+		MTGS::RunOnGSThread([&gs_drained]() { gs_drained.store(true, std::memory_order_release); });
+		for (int i = 0; i < 1000 && !gs_drained.load(std::memory_order_acquire); i++)
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
 
 	retro_system_av_info av_info;
 	retro_get_system_av_info(&av_info);
