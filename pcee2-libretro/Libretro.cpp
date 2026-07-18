@@ -19,7 +19,9 @@
 #include <atomic>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -51,6 +53,9 @@
 #include "pcsx2/ImGui/ImGuiFullscreen.h"
 #include "pcsx2/ImGui/ImGuiManager.h"
 #include "pcsx2/Input/InputManager.h"
+#include "pcsx2/GS/Renderers/Vulkan/GSDeviceVK.h"
+#include "pcsx2/GS/Renderers/Vulkan/VKLibretro.h"
+#include "pcsx2/GS/Renderers/Vulkan/VKLoader.h"
 #include "pcsx2/MTGS.h"
 #include "pcsx2/MemoryTypes.h"
 #include "pcsx2/SIO/Pad/Pad.h"
@@ -62,6 +67,7 @@
 #include "svnrev.h"
 
 #include "libretro.h"
+#include "libretro_vulkan.h"
 
 #include "fmt/format.h"
 
@@ -102,6 +108,25 @@ namespace LibretroHost
 	static std::vector<u32> s_frame_pixels;
 	static u32 s_frame_width = 0;
 	static u32 s_frame_height = 0;
+
+	// Zero-copy Vulkan HW-render present path (ported from yaps2): the GS shares
+	// the frontend's VkDevice (context negotiation) and hands the rendered
+	// VkImage straight to the frontend via set_image, instead of the GPU->CPU
+	// readback path above. Selected at retro_load_game; the readback path stays
+	// as a fallback (renderer != Vulkan, frontend refuses HW render, or the
+	// PCEE2_READBACK=1 env override for A/B testing).
+	static bool s_hw_render_vulkan = false;
+	// Set by the frontend's context_reset once the retro_hw_render_interface is
+	// available; the CPU thread parks on it before booting the VM so GSDeviceVK
+	// adopts the shared instance during negotiation rather than creating its own.
+	static std::atomic<bool> s_context_ready{false};
+	// Raised once CPUThreadInitialize() has run, so the frontend's negotiation
+	// callback (which opens MTGS) doesn't race the CPU-thread global setup.
+	static std::atomic<bool> s_cpu_thread_initialized{false};
+	// HW-render counterpart of "s_frame_width != 0": the readback callback that
+	// used to set s_frame_width isn't wired in HW mode, so UpdateInput's
+	// VM-is-up gate needs this instead. Only touched on the retro_run thread.
+	static bool s_hw_frame_seen = false;
 
 	// deferred work queue for Host::RunOnCPUThread
 	static std::mutex s_cpu_work_mutex;
@@ -482,6 +507,14 @@ void LibretroHost::RegisterCoreOptions()
 			{{"1", "1x Native (640x480)"}, {"2", "2x Native (1280x960)"}, {"3", "3x Native (1920x1440)"},
 				{"4", "4x Native (2560x1920)"}, {nullptr, nullptr}},
 			"1"},
+		{"pcsx2_hw_download_mode", "Hardware Download Mode", nullptr,
+			"How GPU->CPU readbacks are handled when a game reads rendered data back (GT3 heat haze, "
+			"photo modes...). Accurate stalls the whole pipeline on tiler GPUs; Unsynchronized returns "
+			"stale data without stalling (big speedup, may glitch those effects); Disabled skips them.",
+			nullptr, "graphics",
+			{{"accurate", "Accurate (Default)"}, {"unsynchronized", "Unsynchronized (Fast)"},
+				{"disabled", "Disabled (Fastest)"}, {nullptr, nullptr}},
+			"accurate"},
 		{"pcsx2_blending_accuracy", "Blending Accuracy", nullptr,
 			"Higher levels emulate more PS2 blending effects correctly at a GPU cost.", nullptr, "graphics",
 			{{"minimum", "Minimum"}, {"basic", "Basic (Recommended)"}, {"medium", "Medium"}, {"high", "High"},
@@ -558,6 +591,14 @@ void LibretroHost::RegisterCoreOptions()
 			"Enable built-in progressive-output patches where available. Best applied before starting a game.", nullptr,
 			"patches", {{"disabled", nullptr}, {"enabled", nullptr}, {nullptr, nullptr}}, "disabled"},
 		// performance
+		{"pcsx2_mtvu", "MTVU (Multi-Threaded VU1)", nullptr,
+			"Runs VU1 on its own thread. Large speedup on multi-core CPUs; a small number of games hang with it.",
+			nullptr, "performance",
+			{{"enabled", nullptr}, {"disabled", nullptr}, {nullptr, nullptr}}, "enabled"},
+		{"pcsx2_instant_vu1", "Instant VU1", nullptr,
+			"Runs VU1 to completion immediately (ignored while MTVU is enabled). Usually a speedup.",
+			nullptr, "performance",
+			{{"enabled", nullptr}, {"disabled", nullptr}, {nullptr, nullptr}}, "enabled"},
 		{"pcsx2_ee_cycle_rate", "EE Cycle Rate", nullptr,
 			"Underclock or overclock the emulated Emotion Engine. Default 100%. May break games.", nullptr,
 			"performance",
@@ -673,7 +714,10 @@ void LibretroHost::ReadCoreOptions(bool startup)
 	s_opt_upscale = upscale;
 	s_out_width.store(DEFAULT_WIDTH * upscale, std::memory_order_release);
 	s_out_height.store(DEFAULT_HEIGHT * upscale, std::memory_order_release);
-	GSSetFramebufferReadback(&FramebufferReadbackCallback, DEFAULT_WIDTH * upscale, DEFAULT_HEIGHT * upscale);
+	// The Vulkan HW-render path presents by sharing the GS VkImage (set_image);
+	// only wire the GPU->CPU readback when we're actually on the readback path.
+	if (!s_hw_render_vulkan)
+		GSSetFramebufferReadback(&FramebufferReadbackCallback, DEFAULT_WIDTH * upscale, DEFAULT_HEIGHT * upscale);
 
 	// graphics quality
 	const auto get_int_option = [&get_option](const char* key, const char* fallback) {
@@ -683,6 +727,17 @@ void LibretroHost::ReadCoreOptions(bool startup)
 	static constexpr std::pair<const char*, AccBlendLevel> blend_levels[] = {
 		{"minimum", AccBlendLevel::Minimum}, {"basic", AccBlendLevel::Basic}, {"medium", AccBlendLevel::Medium},
 		{"high", AccBlendLevel::High}, {"full", AccBlendLevel::Full}, {"maximum", AccBlendLevel::Maximum}};
+	// GSHardwareDownloadMode: Enabled=0, Unsynchronized=3, Disabled=4
+	{
+		const char* dl = get_option("pcsx2_hw_download_mode", "accurate");
+		int dl_mode = 0;
+		if (std::strcmp(dl, "unsynchronized") == 0)
+			dl_mode = 3;
+		else if (std::strcmp(dl, "disabled") == 0)
+			dl_mode = 4;
+		s_settings_interface.SetIntValue("EmuCore/GS", "HWDownloadMode", dl_mode);
+	}
+
 	const char* blend = get_option("pcsx2_blending_accuracy", "basic");
 	for (const auto& [name, level] : blend_levels)
 	{
@@ -746,6 +801,23 @@ void LibretroHost::ReadCoreOptions(bool startup)
 	s_aspect_bits.store(std::bit_cast<u32>(aspect_value), std::memory_order_release);
 
 	// performance
+	// PCEE2_OSD=1: performance overlay (fps/speed + EE/GS/VU thread loads +
+	// GPU usage) for diagnosing whether a heavy scene is CPU- or GPU-bound.
+	if (std::getenv("PCEE2_OSD"))
+	{
+		s_settings_interface.SetBoolValue("EmuCore/GS", "OsdShowSpeed", true);
+		s_settings_interface.SetBoolValue("EmuCore/GS", "OsdShowFPS", true);
+		s_settings_interface.SetBoolValue("EmuCore/GS", "OsdShowResolution", true);
+		s_settings_interface.SetBoolValue("EmuCore/GS", "OsdShowCPU", true);
+		s_settings_interface.SetBoolValue("EmuCore/GS", "OsdShowGPU", true);
+	}
+
+	// MTVU: VU1 on its own thread — the single biggest speedup on multi-core
+	// ARM (pcee2's base defaults it off; yaps2's libretro core defaults it on).
+	s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vuThread",
+		std::strcmp(get_option("pcsx2_mtvu", "enabled"), "enabled") == 0);
+	s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vu1Instant",
+		std::strcmp(get_option("pcsx2_instant_vu1", "enabled"), "enabled") == 0);
 	s_settings_interface.SetIntValue("EmuCore/Speedhacks", "EECycleRate", get_int_option("pcsx2_ee_cycle_rate", "0"));
 	s_settings_interface.SetIntValue("EmuCore/Speedhacks", "EECycleSkip", get_int_option("pcsx2_ee_cycle_skip", "0"));
 
@@ -855,6 +927,7 @@ void LibretroHost::CPUThreadMain()
 	const bool init_ok = VMManager::Internal::CPUThreadInitialize();
 	if (!init_ok)
 		Console.Error("CPUThreadInitialize() failed.");
+	s_cpu_thread_initialized.store(true, std::memory_order_release);
 
 	for (;;)
 	{
@@ -865,6 +938,13 @@ void LibretroHost::CPUThreadMain()
 				break;
 			s_boot_requested = false;
 		}
+
+		// Vulkan HW render: the frontend's context negotiation opens MTGS
+		// (GSDeviceVK adopts the shared instance) and then fires context_reset.
+		// Booting the VM before that would open the GS against our own instance.
+		while (init_ok && s_hw_render_vulkan && !s_context_ready.load(std::memory_order_acquire) &&
+			s_running.load(std::memory_order_acquire))
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
 		if (init_ok)
 		{
@@ -919,6 +999,84 @@ void LibretroHost::DrainCPUWork()
 }
 
 //////////////////////////////////////////////////////////////////////////
+// Vulkan context negotiation (ported from yaps2). create_device runs on the
+// frontend thread while it builds its Vulkan context: it stashes the shared
+// instance/GPU + the frontend's required extensions/layers/features into
+// VKLibretro::Init, then opens MTGS so GSDeviceVK constructs against the shared
+// device (its vkCreateDevice is intercepted by the VKLibretro wraps, which
+// capture the resulting VkDevice for the reply below).
+//////////////////////////////////////////////////////////////////////////
+
+static const VkApplicationInfo* GetVulkanApplicationInfo(void)
+{
+	static VkApplicationInfo app_info{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+	app_info.pApplicationName = "PCEE2";
+	app_info.applicationVersion = VK_MAKE_VERSION(2, 0, 0);
+	app_info.pEngineName = "PCEE2";
+	app_info.engineVersion = VK_MAKE_VERSION(2, 0, 0);
+	app_info.apiVersion = VK_API_VERSION_1_1;
+	return &app_info;
+}
+
+static bool CreateVulkanDevice(retro_vulkan_context* context, VkInstance instance, VkPhysicalDevice gpu,
+	VkSurfaceKHR surface, PFN_vkGetInstanceProcAddr get_instance_proc_addr, const char** required_device_extensions,
+	unsigned num_required_device_extensions, const char** required_device_layers,
+	unsigned num_required_device_layers, const VkPhysicalDeviceFeatures* required_features)
+{
+	VKLibretro::Init.instance = instance;
+	VKLibretro::Init.gpu = gpu;
+	VKLibretro::Init.get_instance_proc_addr = get_instance_proc_addr;
+	VKLibretro::Init.required_device_extensions = required_device_extensions;
+	VKLibretro::Init.num_required_device_extensions = num_required_device_extensions;
+	VKLibretro::Init.required_device_layers = required_device_layers;
+	VKLibretro::Init.num_required_device_layers = num_required_device_layers;
+	VKLibretro::Init.required_features = required_features;
+
+	// Bring up the GS thread now: GSDeviceVK adopts Init.instance/gpu and the
+	// wrapped vkCreateDevice fills Init.device with the shared device.
+	if (!MTGS::IsOpen() && !MTGS::WaitForOpen())
+	{
+		Console.Error("MTGS::WaitForOpen failed during Vulkan negotiation.");
+		return false;
+	}
+
+	GSDeviceVK* dev = GSDeviceVK::GetInstance();
+	if (!dev || VKLibretro::Init.device == VK_NULL_HANDLE)
+	{
+		Console.Error("GS device missing after negotiation open.");
+		return false;
+	}
+
+	context->gpu = dev->GetPhysicalDevice();
+	context->device = VKLibretro::Init.device;
+	context->queue = dev->GetGraphicsQueue();
+	context->queue_family_index = dev->GetGraphicsQueueFamilyIndex();
+	context->presentation_queue = context->queue;
+	context->presentation_queue_family_index = context->queue_family_index;
+	return true;
+}
+
+static void OnContextReset(void)
+{
+	retro_hw_render_interface* iface = nullptr;
+	if (!s_environ_cb(RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE, &iface) || !iface ||
+		iface->interface_type != RETRO_HW_RENDER_INTERFACE_VULKAN)
+	{
+		Console.Error("Failed to get Vulkan HW render interface.");
+		return;
+	}
+	VKLibretro::SetHWRenderInterface(iface);
+	s_context_ready.store(true, std::memory_order_release);
+}
+
+static void OnContextDestroy(void)
+{
+	VKLibretro::AbortPacing();
+	s_context_ready.store(false, std::memory_order_release);
+	VKLibretro::SetHWRenderInterface(nullptr);
+}
+
+//////////////////////////////////////////////////////////////////////////
 // libretro entry points
 //////////////////////////////////////////////////////////////////////////
 
@@ -965,8 +1123,10 @@ void retro_get_system_av_info(struct retro_system_av_info* info)
 	std::memset(info, 0, sizeof(*info));
 	info->geometry.base_width = s_out_width.load(std::memory_order_acquire);
 	info->geometry.base_height = s_out_height.load(std::memory_order_acquire);
-	info->geometry.max_width = MAX_WIDTH;
-	info->geometry.max_height = MAX_HEIGHT;
+	// The Vulkan HW-render canvas is aspect-expanded and can exceed the plain
+	// upscale rectangle, so advertise the frontend the larger backbuffer bound.
+	info->geometry.max_width = s_hw_render_vulkan ? VKLibretro::kMaxCanvasWidth : MAX_WIDTH;
+	info->geometry.max_height = s_hw_render_vulkan ? VKLibretro::kMaxCanvasHeight : MAX_HEIGHT;
 	const u32 aspect_bits = s_aspect_bits.load(std::memory_order_acquire);
 	info->geometry.aspect_ratio = aspect_bits ? std::bit_cast<float>(aspect_bits) : (4.0f / 3.0f);
 	info->timing.fps = static_cast<double>(fps);
@@ -1026,6 +1186,53 @@ bool retro_load_game(const struct retro_game_info* game)
 	if (!InitializeConfig())
 		return false;
 
+	// Decide the present path before SettingsOverride (which wires the readback
+	// callback only when we're NOT sharing the GS VkImage). HW render needs the
+	// Vulkan renderer; PCEE2_READBACK=1 forces the legacy readback path for A/B.
+	{
+		retro_variable var = {"pcsx2_renderer", nullptr};
+		const bool renderer_is_vulkan = !s_environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) || !var.value ||
+			std::strcmp(var.value, "vulkan") == 0;
+		s_hw_render_vulkan = renderer_is_vulkan && !std::getenv("PCEE2_READBACK");
+	}
+
+	if (s_hw_render_vulkan)
+	{
+		static struct retro_hw_render_callback hw_render = {};
+		hw_render.context_type = RETRO_HW_CONTEXT_VULKAN;
+		hw_render.version_major = 1;
+		hw_render.version_minor = 1;
+		hw_render.context_reset = OnContextReset;
+		hw_render.context_destroy = OnContextDestroy;
+		hw_render.cache_context = true;
+		if (!s_environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render))
+		{
+			Console.Warning("Frontend refused Vulkan HW context; falling back to readback present.");
+			s_hw_render_vulkan = false;
+		}
+		else
+		{
+			static const struct retro_hw_render_context_negotiation_interface_vulkan neg_iface = {
+				RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN,
+				RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN_VERSION,
+				GetVulkanApplicationInfo,
+				CreateVulkanDevice,
+				nullptr, // destroy_device
+			};
+			s_environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE, (void*)&neg_iface);
+
+			Error vk_error;
+			if (!Vulkan::IsVulkanLibraryLoaded() && !Vulkan::LoadVulkanLibrary(&vk_error))
+			{
+				Console.Error(fmt::format("LoadVulkanLibrary: {}", vk_error.GetDescription()));
+				return false;
+			}
+			VKLibretro::InstallWraps();
+			VKLibretro::Active = true;
+			s_context_ready.store(false, std::memory_order_release);
+		}
+	}
+
 	ReadCoreOptions(true);
 	SettingsOverride();
 
@@ -1045,6 +1252,7 @@ bool retro_load_game(const struct retro_game_info* game)
 		s_frame_width = 0;
 		s_frame_height = 0;
 	}
+	s_hw_frame_seen = false;
 
 	s_running.store(true, std::memory_order_release);
 	{
@@ -1055,6 +1263,15 @@ bool retro_load_game(const struct retro_game_info* game)
 	if (!s_cpu_thread.joinable())
 		s_cpu_thread = std::thread(CPUThreadMain);
 	s_session_cv.notify_all();
+
+	// The frontend calls the negotiation create_device (which opens MTGS) after
+	// this returns; it depends on CPUThreadInitialize having run. Wait for it so
+	// the two threads don't race on the CPU-thread global setup.
+	if (s_hw_render_vulkan)
+	{
+		while (!s_cpu_thread_initialized.load(std::memory_order_acquire))
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
 	return true;
 }
 
@@ -1067,6 +1284,20 @@ void retro_unload_game(void)
 {
 	if (!s_cpu_thread.joinable())
 		return;
+
+	// The frontend replays the last set_image indefinitely (menu background,
+	// duped frames) — retract it and wait for the GPU before the VM teardown
+	// below destroys the textures it points at. Abort pacing first so the GS
+	// thread can't stay parked in PublishFrame.
+	if (s_hw_render_vulkan)
+	{
+		VKLibretro::AbortPacing();
+		if (auto* vulkan = static_cast<retro_hw_render_interface_vulkan*>(VKLibretro::GetHWRenderInterface()))
+		{
+			vulkan->set_image(vulkan->handle, nullptr, 0, nullptr, vulkan->queue_index);
+			vulkan->wait_sync_index(vulkan->handle);
+		}
+	}
 
 	s_running.store(false, std::memory_order_release);
 	if (VMManager::HasValidVM())
@@ -1087,7 +1318,15 @@ void retro_unload_game(void)
 	}
 
 	s_audio_stream = nullptr;
-	GSSetFramebufferReadback(nullptr, 0, 0);
+	if (!s_hw_render_vulkan)
+		GSSetFramebufferReadback(nullptr, 0, 0);
+	if (s_hw_render_vulkan)
+	{
+		VKLibretro::Shutdown();
+		VKLibretro::Active = false;
+		s_hw_render_vulkan = false;
+		s_context_ready.store(false, std::memory_order_release);
+	}
 	s_memory_map_sent = false;
 }
 
@@ -1107,7 +1346,7 @@ static void UpdateInput()
 
 	// don't touch Pad state until the VM is fully up (first frame produced);
 	// during VMManager::Initialize() the CPU thread is still constructing it
-	if (s_frame_width == 0)
+	if (s_frame_width == 0 && !s_hw_frame_seen)
 		return;
 
 	s_input_poll_cb();
@@ -1231,8 +1470,10 @@ static void OutputAudio()
 // (PAL 50Hz detection after boot, PSX-mode 44.1kHz, upscale option, ...).
 static void UpdateAVInfoIfChanged()
 {
-	static u32 last_fps_bits = 0;
-	static u32 last_sample_rate = 0;
+	// Initialized to what retro_get_system_av_info reported at startup, so the
+	// first VM report only announces when it genuinely differs.
+	static u32 last_fps_bits = 0; // 0 = "still the 59.94f startup default"
+	static u32 last_sample_rate = SAMPLE_RATE;
 	static u32 last_width = 0;
 	static u32 last_height = 0;
 	static u32 last_aspect_bits = 0;
@@ -1243,8 +1484,17 @@ static void UpdateAVInfoIfChanged()
 	const u32 height = s_out_height.load(std::memory_order_acquire);
 	const u32 aspect_bits = s_aspect_bits.load(std::memory_order_acquire);
 
-	if (fps_bits == last_fps_bits && sample_rate == last_sample_rate && width == last_width &&
-		height == last_height && aspect_bits == last_aspect_bits)
+	// SET_SYSTEM_AV_INFO makes the frontend reinit the whole video driver
+	// (context_destroy + re-negotiation on the HW-render path) — only worth it
+	// for a real timing change. In HW-render mode geometry/aspect are handled
+	// per-frame via SET_GEOMETRY (no reinit), so ignore them here. The fps
+	// compare needs a tolerance: NTSC reports 59.94005994Hz vs the 59.94f
+	// startup default, and that 0.00006Hz delta must not trigger a reinit.
+	const float fps = fps_bits ? std::bit_cast<float>(fps_bits) : 0.0f;
+	const float last_fps = last_fps_bits ? std::bit_cast<float>(last_fps_bits) : 59.94f;
+	const bool timing_changed = std::abs(fps - last_fps) > 0.25f || sample_rate != last_sample_rate;
+	const bool geometry_changed = width != last_width || height != last_height || aspect_bits != last_aspect_bits;
+	if (!timing_changed && (s_hw_render_vulkan || !geometry_changed))
 		return;
 
 	// don't announce anything until the VM has reported a real frame rate
@@ -1256,6 +1506,18 @@ static void UpdateAVInfoIfChanged()
 	last_width = width;
 	last_height = height;
 	last_aspect_bits = aspect_bits;
+
+	// The frontend's video reinit runs inside this environment call while the
+	// GS thread may still be chewing queued work that submits to the shared
+	// Vulkan queue — drain it first so the reinit doesn't race those submits.
+	// (The CPU thread is parked here: retro_run hasn't posted its run token.)
+	if (s_hw_render_vulkan && MTGS::IsOpen())
+	{
+		std::atomic_bool gs_drained{false};
+		MTGS::RunOnGSThread([&gs_drained]() { gs_drained.store(true, std::memory_order_release); });
+		for (int i = 0; i < 1000 && !gs_drained.load(std::memory_order_acquire); i++)
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
 
 	retro_system_av_info av_info;
 	retro_get_system_av_info(&av_info);
@@ -1319,7 +1581,54 @@ void retro_run(void)
 	const bool got_frame = s_frame_cv.wait_for(lock, std::chrono::milliseconds(200), []() { return s_frame_ready; });
 	s_frame_ready = false;
 
-	if (got_frame && s_frame_width > 0 && s_frame_height > 0 && s_video_cb)
+	if (s_hw_render_vulkan)
+	{
+		// Zero-copy present: consume the frame the GS just published and hand
+		// its VkImage to the frontend. The retro_vulkan_image storage must
+		// outlive this call (the frontend replays it for cached/duped frames).
+		VKLibretro::Frame frame;
+		auto* vulkan = static_cast<retro_hw_render_interface_vulkan*>(VKLibretro::GetHWRenderInterface());
+		if (vulkan && VKLibretro::ConsumeFrame(&frame))
+		{
+			s_hw_frame_seen = true;
+			// The GS present path sizes the canvas to the aspect-expanded merged
+			// frame, so it tracks the internal resolution — keep the frontend's
+			// geometry in sync so scaling stays correct.
+			static u32 last_geom_w = 0, last_geom_h = 0;
+			if (frame.width != last_geom_w || frame.height != last_geom_h)
+			{
+				last_geom_w = frame.width;
+				last_geom_h = frame.height;
+				retro_game_geometry geometry = {};
+				geometry.base_width = frame.width;
+				geometry.base_height = frame.height;
+				geometry.max_width = VKLibretro::kMaxCanvasWidth;
+				geometry.max_height = VKLibretro::kMaxCanvasHeight;
+				// The canvas is already aspect-corrected; display it 1:1.
+				geometry.aspect_ratio = static_cast<float>(frame.width) / static_cast<float>(frame.height);
+				s_environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &geometry);
+			}
+			static retro_vulkan_image vkimage;
+			vkimage = {};
+			vkimage.image_view = frame.view;
+			vkimage.image_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			vkimage.create_info = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, nullptr, 0, frame.image,
+				VK_IMAGE_VIEW_TYPE_2D, frame.format,
+				{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+					VK_COMPONENT_SWIZZLE_IDENTITY},
+				{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+			vulkan->set_image(vulkan->handle, &vkimage, 0, nullptr, vulkan->queue_index);
+			if (s_video_cb)
+				s_video_cb(RETRO_HW_FRAME_BUFFER_VALID, frame.width, frame.height, 0);
+		}
+		else if (s_video_cb)
+		{
+			// nothing new (still booting, or a duplicate frame) — dupe
+			s_video_cb(nullptr, s_frame_width ? s_frame_width : DEFAULT_WIDTH,
+				s_frame_height ? s_frame_height : DEFAULT_HEIGHT, 0);
+		}
+	}
+	else if (got_frame && s_frame_width > 0 && s_frame_height > 0 && s_video_cb)
 	{
 		s_video_cb(s_frame_pixels.data(), s_frame_width, s_frame_height, s_frame_width * sizeof(u32));
 	}
