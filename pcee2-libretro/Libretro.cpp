@@ -507,6 +507,14 @@ void LibretroHost::RegisterCoreOptions()
 			{{"1", "1x Native (640x480)"}, {"2", "2x Native (1280x960)"}, {"3", "3x Native (1920x1440)"},
 				{"4", "4x Native (2560x1920)"}, {nullptr, nullptr}},
 			"1"},
+		{"pcsx2_hw_download_mode", "Hardware Download Mode", nullptr,
+			"How GPU->CPU readbacks are handled when a game reads rendered data back (GT3 heat haze, "
+			"photo modes...). Accurate stalls the whole pipeline on tiler GPUs; Unsynchronized returns "
+			"stale data without stalling (big speedup, may glitch those effects); Disabled skips them.",
+			nullptr, "graphics",
+			{{"accurate", "Accurate (Default)"}, {"unsynchronized", "Unsynchronized (Fast)"},
+				{"disabled", "Disabled (Fastest)"}, {nullptr, nullptr}},
+			"accurate"},
 		{"pcsx2_blending_accuracy", "Blending Accuracy", nullptr,
 			"Higher levels emulate more PS2 blending effects correctly at a GPU cost.", nullptr, "graphics",
 			{{"minimum", "Minimum"}, {"basic", "Basic (Recommended)"}, {"medium", "Medium"}, {"high", "High"},
@@ -719,6 +727,17 @@ void LibretroHost::ReadCoreOptions(bool startup)
 	static constexpr std::pair<const char*, AccBlendLevel> blend_levels[] = {
 		{"minimum", AccBlendLevel::Minimum}, {"basic", AccBlendLevel::Basic}, {"medium", AccBlendLevel::Medium},
 		{"high", AccBlendLevel::High}, {"full", AccBlendLevel::Full}, {"maximum", AccBlendLevel::Maximum}};
+	// GSHardwareDownloadMode: Enabled=0, Unsynchronized=3, Disabled=4
+	{
+		const char* dl = get_option("pcsx2_hw_download_mode", "accurate");
+		int dl_mode = 0;
+		if (std::strcmp(dl, "unsynchronized") == 0)
+			dl_mode = 3;
+		else if (std::strcmp(dl, "disabled") == 0)
+			dl_mode = 4;
+		s_settings_interface.SetIntValue("EmuCore/GS", "HWDownloadMode", dl_mode);
+	}
+
 	const char* blend = get_option("pcsx2_blending_accuracy", "basic");
 	for (const auto& [name, level] : blend_levels)
 	{
