@@ -123,6 +123,10 @@ namespace LibretroHost
 	// Raised once CPUThreadInitialize() has run, so the frontend's negotiation
 	// callback (which opens MTGS) doesn't race the CPU-thread global setup.
 	static std::atomic<bool> s_cpu_thread_initialized{false};
+	// HW-render counterpart of "s_frame_width != 0": the readback callback that
+	// used to set s_frame_width isn't wired in HW mode, so UpdateInput's
+	// VM-is-up gate needs this instead. Only touched on the retro_run thread.
+	static bool s_hw_frame_seen = false;
 
 	// deferred work queue for Host::RunOnCPUThread
 	static std::mutex s_cpu_work_mutex;
@@ -1204,6 +1208,7 @@ bool retro_load_game(const struct retro_game_info* game)
 		s_frame_width = 0;
 		s_frame_height = 0;
 	}
+	s_hw_frame_seen = false;
 
 	s_running.store(true, std::memory_order_release);
 	{
@@ -1297,7 +1302,7 @@ static void UpdateInput()
 
 	// don't touch Pad state until the VM is fully up (first frame produced);
 	// during VMManager::Initialize() the CPU thread is still constructing it
-	if (s_frame_width == 0)
+	if (s_frame_width == 0 && !s_hw_frame_seen)
 		return;
 
 	s_input_poll_cb();
@@ -1541,6 +1546,7 @@ void retro_run(void)
 		auto* vulkan = static_cast<retro_hw_render_interface_vulkan*>(VKLibretro::GetHWRenderInterface());
 		if (vulkan && VKLibretro::ConsumeFrame(&frame))
 		{
+			s_hw_frame_seen = true;
 			// The GS present path sizes the canvas to the aspect-expanded merged
 			// frame, so it tracks the internal resolution — keep the frontend's
 			// geometry in sync so scaling stays correct.
