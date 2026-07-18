@@ -2500,7 +2500,9 @@ GSDevice::PresentResult GSDeviceVK::BeginPresent(bool frame_skip)
 				return now - r.retired_at >= kLibretroRetireFrames;
 			});
 
-			const GSVector2i pres = GetPresentationSize();
+			// (yaps2 uses GetPresentationSize() here, which is GetWindowSize()
+			// adjusted for DisplayRotation — pcee2's base has no rotation.)
+			const GSVector2i pres = GetWindowSize();
 			std::unique_ptr<GSTextureVK>& bb = s_libretro_bb[s_libretro_bb_idx];
 			if (!bb || bb->GetWidth() != pres.x || bb->GetHeight() != pres.y)
 			{
