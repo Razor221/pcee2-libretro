@@ -634,12 +634,21 @@ if(USE_VULKAN)
 		GS/Renderers/Vulkan/VKBuilders.cpp
 		GS/Renderers/Vulkan/VKLoader.cpp
 		GS/Renderers/Vulkan/VKShaderCache.cpp
+		GS/Renderers/Vulkan/VKLibretro.cpp
 		GS/Renderers/Vulkan/VKStreamBuffer.cpp
 		GS/Renderers/Vulkan/VKSwapChain.cpp
 	)
+	# Zero-copy Vulkan context-sharing handoff for the libretro core. GSDeviceVK
+	# references VKLibretro unconditionally (guarded at runtime by
+	# VKLibretro::Active), so it's compiled in every Vulkan build; when the
+	# libretro core is off, VKLibretro::Active is simply never set. It needs the
+	# libretro HW-render interface header (libretro_vulkan.h -> libretro.h),
+	# which live in the core's source dir; add it PRIVATE so it doesn't leak.
+	target_include_directories(PCSX2 PRIVATE "${CMAKE_SOURCE_DIR}/pcee2-libretro")
 	list(APPEND pcsx2GSHeaders
 		GS/Renderers/Vulkan/GSDeviceVK.h
 		GS/Renderers/Vulkan/GSTextureVK.h
+		GS/Renderers/Vulkan/VKLibretro.h
 		GS/Renderers/Vulkan/VKBuilders.h
 		GS/Renderers/Vulkan/VKEntryPoints.h
 		GS/Renderers/Vulkan/VKEntryPoints.inl
