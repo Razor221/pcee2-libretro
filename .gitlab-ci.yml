@@ -151,8 +151,14 @@ libretro-build-linux-aarch64-musl:
 
 # Windows 64-bit (native MSVC 2019, on the buildbot's msvc2019 runner). PCSX2
 # officially targets MSVC, so unlike the old MinGW cross-build this uses the
-# supported toolchain and PCSX2's vendored 3rdparty (no build-deps-linux.sh and
-# no $CI_PROJECT_DIR/deps prefix). Modelled on lrps2 (libretro/ps2).
+# supported toolchain. Modelled on lrps2 (libretro/ps2).
+#
+# find_package() in cmake/SearchForStuff.cmake REQUIREs PNG, JPEG, ZLIB, Zstd,
+# LZ4, WebP, SDL3, Freetype, plutovg, plutosvg, ryml and Shaderc. None of those
+# live in PCSX2's vendored 3rdparty, so — exactly like the Linux jobs build them
+# with build-deps-linux.sh into $CI_PROJECT_DIR/deps — the MSVC job builds them
+# with build-deps-windows.bat (static, into the same prefix) before configuring.
+# Without it CMake configure fails immediately with "Could NOT find PNG/ZLIB".
 libretro-build-windows-x64:
   # Still experimental for pcee2 until proven green; keep it from failing the
   # pipeline (Linux x64/aarch64 are the shipping targets).
@@ -160,12 +166,16 @@ libretro-build-windows-x64:
   extends:
     - .libretro-windows-msvc19-cmake-x86_64
     - .core-defs
+  before_script:
+    # Keep the template's MSVC environment setup (VsDevCmd), then build the deps
+    # into $CI_PROJECT_DIR/deps so cl/cmake are already on PATH for the .bat.
+    - !reference [.libretro-windows-msvc19-cmake, before_script]
+    - cmd /c "pcee2-libretro\scripts\build-deps-windows.bat" "$Env:CI_PROJECT_DIR\deps"
   variables:
-    # The shared .core-defs CORE_ARGS targets the Linux deps prefix produced by
-    # build-deps-linux.sh ($CI_PROJECT_DIR/deps), which doesn't exist on the
-    # MSVC build. Override with the MSVC-appropriate flags: keep the
-    # libretro-specific options, drop the Linux/shaderc/find-root deps bits and
-    # let PCSX2's bundled 3rdparty satisfy the dependencies.
+    # Point CMake at the deps prefix we just built and link shaderc statically
+    # (shaderc_combined.lib), mirroring the Linux .core-defs but with MSVC paths
+    # (.lib, not .a). No CMAKE_FIND_ROOT_PATH here — that was an MXE/MinGW-only
+    # workaround; the native MSVC toolchain searches CMAKE_PREFIX_PATH normally.
     CORE_ARGS: >-
       -DCMAKE_BUILD_TYPE=Release
       -DCMAKE_POLICY_VERSION_MINIMUM=3.18
@@ -173,6 +183,9 @@ libretro-build-windows-x64:
       -DENABLE_QT_UI=OFF
       -DENABLE_TESTS=OFF
       -DDISABLE_ADVANCE_SIMD=ON
+      -DSHADERC_STATIC=ON
+      -DCMAKE_PREFIX_PATH=$CI_PROJECT_DIR/deps
+      -DSHADERC_LIBRARY=$CI_PROJECT_DIR/deps/lib/shaderc_combined.lib
     # MSVC is a multi-config generator; CMakeLists.txt sets RUNTIME_OUTPUT_DIRECTORY
     # to bin, so the built .dll lands in bin/Release.
     EXTRA_PATH: bin/Release
