@@ -99,14 +99,76 @@ cmake -S DirectX-Headers -B DirectX-Headers\b %COMMON% -DDXHEADERS_BUILD_TEST=OF
 cmake --build DirectX-Headers\b --target install || exit /b 1
 
 echo === shaderc %SHADERC% (static combined, linked into the core) ===
+call :ensure_python || exit /b 1
 if not exist shaderc git clone --depth 1 -b %SHADERC% https://github.com/google/shaderc || exit /b 1
 cd shaderc
-python utils\git-sync-deps || exit /b 1
+"%PYTHON%" utils\git-sync-deps || exit /b 1
 cd ..
-cmake -S shaderc -B shaderc\b -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=%INSTALLDIR% -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -G Ninja -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DSHADERC_SKIP_COPYRIGHT_CHECK=ON -DSHADERC_ENABLE_SHARED_CRT=ON || exit /b 1
+rem SPIRV-Tools and glslang generate sources with Python scripts of their own, so
+rem hand them the interpreter we resolved instead of letting find_package() guess
+rem (PYTHON_EXECUTABLE covers the older FindPythonInterp path they still use).
+cmake -S shaderc -B shaderc\b -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=%INSTALLDIR% -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -G Ninja -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DSHADERC_SKIP_COPYRIGHT_CHECK=ON -DSHADERC_ENABLE_SHARED_CRT=ON "-DPython3_EXECUTABLE=%PYTHON%" "-DPYTHON_EXECUTABLE=%PYTHON%" || exit /b 1
 cmake --build shaderc\b --target shaderc_combined || exit /b 1
 copy /y shaderc\b\libshaderc\shaderc_combined.lib "%INSTALLDIR%\lib\shaderc_combined.lib" || exit /b 1
 xcopy /e /i /y shaderc\libshaderc\include\shaderc "%INSTALLDIR%\include\shaderc" || exit /b 1
 
 echo Dependencies installed to %INSTALLDIR%
+exit /b 0
+
+rem ---------------------------------------------------------------------------
+rem Resolve a Python 3 interpreter into %PYTHON% (full path) and put it on PATH.
+rem
+rem shaderc's utils\git-sync-deps is a Python script, and SPIRV-Tools / glslang
+rem run generator scripts from their CMake builds, so Python is needed for the
+rem whole shaderc step. GitHub's windows-2025 image ships Python, but the
+rem libretro buildbot's MSVC runner does not ("'python' is not recognized"), so
+rem fall back to the official python.org NuGet package, which is a plain zip with
+rem a normal Lib\ layout and needs no installer or admin rights.
+rem ---------------------------------------------------------------------------
+:ensure_python
+if defined PYTHON exit /b 0
+for %%p in (python.exe python3.exe) do (
+  if not defined PYTHON (
+    for /f "delims=" %%q in ('where %%p 2^>nul') do (
+      if not defined PYTHON (
+        "%%q" -c "import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)" >nul 2>nul && set "PYTHON=%%q"
+      )
+    )
+  )
+)
+if not defined PYTHON (
+  for /f "delims=" %%q in ('py -3 -c "import sys; print(sys.executable)" 2^>nul') do set "PYTHON=%%q"
+)
+if defined PYTHON (
+  echo Using Python at !PYTHON!
+  exit /b 0
+)
+
+set "PYVER=3.12.10"
+set "PYROOT=%CD%\python-%PYVER%"
+echo === no Python found, bootstrapping CPython %PYVER% ===
+if not exist "!PYROOT!\tools\python.exe" (
+  if exist python.nupkg del /q python.nupkg
+  rem curl.exe ships with Windows 10/Server 2019 and up; fall back to PowerShell.
+  curl.exe -sSL -o python.nupkg "https://globalcdn.nuget.org/packages/python.%PYVER%.nupkg"
+  if not exist python.nupkg (
+    powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing -Uri 'https://globalcdn.nuget.org/packages/python.%PYVER%.nupkg' -OutFile 'python.nupkg'"
+    if not exist python.nupkg exit /b 1
+  )
+  mkdir "!PYROOT!" 2>nul
+  rem A .nupkg is a plain zip; bsdtar reads it, Expand-Archive is the fallback.
+  tar -xf python.nupkg -C "!PYROOT!" 2>nul
+  if not exist "!PYROOT!\tools\python.exe" (
+    powershell -NoProfile -Command "Expand-Archive -Force -Path 'python.nupkg' -DestinationPath '!PYROOT!'"
+  )
+)
+if not exist "!PYROOT!\tools\python.exe" (
+  echo ERROR: failed to bootstrap Python
+  exit /b 1
+)
+rem FindPython3 and scripts invoking a bare `python3` both need to resolve here.
+if not exist "!PYROOT!\tools\python3.exe" copy /y "!PYROOT!\tools\python.exe" "!PYROOT!\tools\python3.exe" >nul
+set "PATH=!PYROOT!\tools;!PATH!"
+set "PYTHON=!PYROOT!\tools\python.exe"
+"!PYTHON!" --version || exit /b 1
 exit /b 0
