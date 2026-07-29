@@ -28,7 +28,7 @@ load_subsystem = "false"
 hw_render = "false"
 needs_fullpath = "true"
 disk_control = "false"
-is_experimental = "true"
+is_experimental = "false"
 
 # Firmware / BIOS
 firmware_count = 2
