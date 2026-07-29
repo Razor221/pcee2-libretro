@@ -167,10 +167,27 @@ libretro-build-windows-x64:
     - .libretro-windows-msvc19-cmake-x86_64
     - .core-defs
   before_script:
-    # Keep the template's MSVC environment setup (VsDevCmd), then build the deps
-    # into $CI_PROJECT_DIR/deps so cl/cmake are already on PATH for the .bat.
+    # Keep the template's MSVC environment setup, then build the deps into
+    # $CI_PROJECT_DIR/deps. The deps build has to enter the developer prompt
+    # itself: the template calls VsDevCmd.bat through Invoke-Expression, which
+    # only configures a child process, so cl/ninja are not on PATH here (the
+    # template's own build step does not notice because the VS generator finds
+    # the toolchain on its own). ci-build-deps-windows.bat does the vcvars call
+    # and the deps build inside one cmd, like the GitHub Actions job does.
     - !reference [.libretro-windows-msvc19-cmake, before_script]
-    - cmd /c "pcee2-libretro\scripts\build-deps-windows.bat" "$Env:CI_PROJECT_DIR\deps"
+    - |
+      if (-not (Test-Path "$Env:CI_PROJECT_DIR\deps\lib\shaderc_combined.lib")) {
+        cmd /c "pcee2-libretro\scripts\ci-build-deps-windows.bat" "$Env:CI_PROJECT_DIR\deps"
+        if ($LastExitCode -ne 0) { throw "dependency build failed" }
+      }
+  # Building ~15 static libraries from source on every pipeline is wasteful; key
+  # the cache on the deps script so it is reused until the recipe changes.
+  cache:
+    key:
+      files:
+        - pcee2-libretro/scripts/build-deps-windows.bat
+    paths:
+      - deps/
   variables:
     # Point CMake at the deps prefix we just built and link shaderc statically
     # (shaderc_combined.lib), mirroring the Linux .core-defs but with MSVC paths
