@@ -312,6 +312,16 @@ else()
   target_compile_definitions(fmt PRIVATE FMT_OS=0)
 endif ()
 
+# MSVC below 19.29 reports __cpp_nontype_template_args as 201911 but only
+# implements class types as non-type template parameters partially, so the
+# detection in format.h picks the branch its compiler cannot compile
+# (C2993 on detail::fixed_string, C3686/C3687 on operator""_a). PUBLIC because
+# the macro changes templates in the headers: consumers have to agree with the
+# library on its value or they end up with ODR violations.
+if (MSVC AND MSVC_VERSION LESS 1929)
+  target_compile_definitions(fmt PUBLIC FMT_USE_NONTYPE_TEMPLATE_ARGS=0)
+endif ()
+
 if (FMT_WERROR)
   target_compile_options(fmt PRIVATE ${WERROR_FLAG})
 endif ()
