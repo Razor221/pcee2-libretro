@@ -23,6 +23,16 @@ static constexpr bool IsDebugBuild = true;
 static constexpr bool IsDebugBuild = false;
 #endif
 
+// MSVC only understands constinit from 19.29 (VS 2019 16.10) onwards, and the
+// libretro Windows CI still runs 19.28. Dropping the keyword costs a
+// compile-time check that the initialization really is constant; it does not
+// change what the compiler generates.
+#ifdef __cpp_constinit
+	#define CONSTINIT constinit
+#else
+	#define CONSTINIT
+#endif
+
 #if defined(_M_ARM64) || defined(__aarch64__)
 	#define ARCH_ARM64
 #elif defined(_M_X86) || defined(__x86_64__) || defined(__i386__)

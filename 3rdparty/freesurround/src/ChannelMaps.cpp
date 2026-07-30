@@ -601,7 +601,7 @@ static constexpr const FreeSurroundDecoder::LUT lut_legacy[] = {
   map_legacy_lf, map_legacy_cf, map_legacy_rf, map_legacy_ls, map_legacy_rs, map_lfe_lfe,
 };
 
-constinit const std::array<FreeSurroundDecoder::ChannelMap,
+FS_CONSTINIT const std::array<FreeSurroundDecoder::ChannelMap,
                            static_cast<size_t>(FreeSurroundDecoder::ChannelSetup::MaxCount)>
   FreeSurroundDecoder::s_channel_maps = {{
     {lut_stereo, map_stereo_xsf},   // Stereo

@@ -11,6 +11,14 @@
 #include <span>
 #include <vector>
 
+// Defined here rather than pulled in from common/ so this stays a standalone
+// library. MSVC only understands constinit from 19.29 onwards.
+#ifdef __cpp_constinit
+#define FS_CONSTINIT constinit
+#else
+#define FS_CONSTINIT
+#endif
+
 /**
  * The FreeSurround decoder.
  */
