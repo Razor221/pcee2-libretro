@@ -319,7 +319,14 @@ endif ()
 # the macro changes templates in the headers: consumers have to agree with the
 # library on its value or they end up with ODR violations.
 if (MSVC AND MSVC_VERSION LESS 1929)
-  target_compile_definitions(fmt PUBLIC FMT_USE_NONTYPE_TEMPLATE_ARGS=0)
+  # fmt already turns consteval off for this compiler ("consteval is broken in
+  # MSVC VS2019 < 16.10" in base.h) but still trusts its relaxed constexpr,
+  # which cannot evaluate the compile-time format string check:
+  #   base.h(2783): error C2131: expression did not evaluate to a constant
+  # Format strings are then checked at run time instead of at compile time.
+  target_compile_definitions(fmt PUBLIC
+    FMT_USE_NONTYPE_TEMPLATE_ARGS=0
+    FMT_USE_CONSTEXPR=0)
 endif ()
 
 if (FMT_WERROR)
