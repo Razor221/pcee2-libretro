@@ -2779,10 +2779,17 @@ template <typename... T> struct fstring {
             FMT_ENABLE_IF(std::is_base_of<detail::compile_string, S>::value&&
                               std::is_same<typename S::char_type, char>::value)>
   FMT_ALWAYS_INLINE fstring(const S&) : str(S()) {
+#if FMT_USE_CONSTEVAL
+    // Forcing constant evaluation here needs a compiler that can do it. The
+    // two constructors above already gate their check on FMT_USE_CONSTEVAL;
+    // this one did not, so on MSVC below 19.29 - where fmt itself turns
+    // consteval off - it failed with "C2131: expression did not evaluate to a
+    // constant". Same treatment, so the check is simply skipped there.
     FMT_CONSTEXPR auto sv = string_view(S());
     FMT_CONSTEXPR int unused =
         (parse_format_string(sv, checker(sv, arg_pack())), 0);
     detail::ignore_unused(unused);
+#endif
   }
   fstring(runtime_format_string<> fmt) : str(fmt.str) {}
 
