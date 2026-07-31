@@ -36,9 +36,11 @@
 
 #ifdef _WIN32
 
+#if !defined(PCSX2_DISABLE_D3D)
 #include "GS/Renderers/DX11/GSDevice11.h"
 #include "GS/Renderers/DX12/GSDevice12.h"
 #include "GS/Renderers/DX11/D3D.h"
+#endif
 
 #endif
 
@@ -110,7 +112,7 @@ static bool OpenGSDevice(GSRendererType renderer, bool clear_state_on_fail, bool
 	const RenderAPI new_api = GetAPIForRenderer(renderer);
 	switch (new_api)
 	{
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(PCSX2_DISABLE_D3D)
 		case RenderAPI::D3D11:
 			g_gs_device = std::make_unique<GSDevice11>();
 			break;
@@ -593,7 +595,7 @@ std::vector<GSAdapterInfo> GSGetAdapterInfo(GSRendererType renderer)
 	std::vector<GSAdapterInfo> ret;
 	switch (renderer)
 	{
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(PCSX2_DISABLE_D3D)
 		case GSRendererType::DX11:
 		case GSRendererType::DX12:
 		{

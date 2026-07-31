@@ -39,11 +39,18 @@ endif()
 
 # Platform-specific dependencies.
 if (WIN32)
-	# The directory is lowercase on disk; spelling it D3D12MemAlloc only works on
-	# a case-insensitive filesystem (i.e. when building on Windows itself). The
-	# MinGW cross-build runs on Linux and fails with "not an existing directory".
-	add_subdirectory(3rdparty/d3d12memalloc EXCLUDE_FROM_ALL)
-	add_subdirectory(3rdparty/winpixeventruntime EXCLUDE_FROM_ALL)
+	# D3D12MemAlloc needs a d3d12.h newer than the one MinGW ships (it uses
+	# D3D12_HEAP_FLAG_HARDWARE_PROTECTED and friends), and WinPixEventRuntime is
+	# an MSVC import library. The D3D renderers are skipped on MinGW anyway - see
+	# PCSX2_DISABLE_D3D in pcsx2/CMakeLists.txt - so don't build either there.
+	#
+	# The d3d12memalloc directory is lowercase on disk; spelling it D3D12MemAlloc
+	# only works on a case-insensitive filesystem (i.e. when building on Windows
+	# itself), and the MinGW cross-build runs on Linux.
+	if (MSVC)
+		add_subdirectory(3rdparty/d3d12memalloc EXCLUDE_FROM_ALL)
+		add_subdirectory(3rdparty/winpixeventruntime EXCLUDE_FROM_ALL)
+	endif()
 	add_subdirectory(3rdparty/winwil EXCLUDE_FROM_ALL)
 	set(FFMPEG_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/3rdparty/ffmpeg/include")
 	find_package(Vtune)

@@ -10,7 +10,9 @@
 #include "GS/GSVector.h"
 #include "GS/Renderers/Common/GSDevice.h"
 #ifdef _WIN32
+#if !defined(PCSX2_DISABLE_D3D)
 #include "GS/Renderers/DX12/GSDevice12.h"
+#endif
 #endif
 #include "GS/Renderers/HW/GSTextureReplacements.h"
 #include "Host.h"
@@ -504,7 +506,7 @@ __ri void ImGuiManager::DrawPerformanceOverlay(float& position_y, float scale, f
 
 			if (GSConfig.OsdShowGPUDebug)
 			{
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(PCSX2_DISABLE_D3D)
 				if (g_gs_device->GetRenderAPI() == RenderAPI::D3D12)
 				{
 					GSDevice12* dev12 = static_cast<GSDevice12*>(g_gs_device.get());

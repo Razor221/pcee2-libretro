@@ -18,7 +18,9 @@
 #include <d3dcommon.h>
 #include <dxgi.h>
 #include <VersionHelpers.h>
+#if !defined(PCSX2_DISABLE_D3D)
 #include "GS/Renderers/DX11/D3D.h"
+#endif
 #include <wil/com.h>
 #endif
 
@@ -282,10 +284,10 @@ GSRendererType GSUtil::GetPreferredRenderer()
 #if defined(__APPLE__)
 		// Mac: Prefer Metal hardware.
 		preferred_renderer = GSRendererType::Metal;
-#elif defined(_WIN32) && defined(ARCH_ARM64)
+#elif defined(_WIN32) && defined(ARCH_ARM64) && !defined(PCSX2_DISABLE_D3D)
 		// Default to DX12 on Windows-on-ARM.
 		preferred_renderer = GSRendererType::DX12;
-#elif defined(_WIN32)
+#elif defined(_WIN32) && !defined(PCSX2_DISABLE_D3D)
 		// Use D3D device info to select renderer.
 		preferred_renderer = D3D::GetPreferredRenderer();
 #else

@@ -603,7 +603,11 @@ if(USE_OPENGL)
 	if(WIN32)
 		list(APPEND pcsx2GSSources GS/Renderers/OpenGL/GLContextWGL.cpp)
 		list(APPEND pcsx2GSHeaders GS/Renderers/OpenGL/GLContextWGL.h)
-		target_link_libraries(PCSX2_FLAGS INTERFACE opengl32.lib WinPixEventRuntime::WinPixEventRuntime)
+		if (MSVC)
+			target_link_libraries(PCSX2_FLAGS INTERFACE opengl32.lib WinPixEventRuntime::WinPixEventRuntime)
+		else()
+			target_link_libraries(PCSX2_FLAGS INTERFACE opengl32)
+		endif()
 	else()
 		if(X11_API OR WAYLAND_API)
 			list(APPEND pcsx2GSSources GS/Renderers/OpenGL/GLContextEGL.cpp)
@@ -693,6 +697,10 @@ if(WIN32)
 		USB/usb-eyetoy/cam-windows.h
 	)
 
+	# MinGW cannot build the D3D backends (its d3d12.h predates the flags
+	# D3D12MemAlloc needs), and the libretro core renders through Vulkan/OpenGL
+	# anyway, so only MSVC gets them - guarded in code by PCSX2_DISABLE_D3D.
+	if (MSVC)
 	list(APPEND pcsx2GSSources
 		GS/Renderers/DX11/D3D.cpp
 		GS/Renderers/DX11/D3D11ShaderCache.cpp
@@ -717,6 +725,7 @@ if(WIN32)
 		GS/Renderers/DX12/GSDevice12.h
 		GS/Renderers/DX12/GSTexture12.h
 	)
+	endif()
 elseif(LINUX)
 	list(APPEND pcsx2USBSources
 		USB/usb-eyetoy/cam-linux.cpp
@@ -1211,7 +1220,26 @@ target_link_libraries(PCSX2_FLAGS INTERFACE
 	${LIBC_LIBRARIES}
 )
 
-if(WIN32)
+if(WIN32 AND NOT MSVC)
+	# MinGW build: no D3D (see PCSX2_DISABLE_D3D above), and the linker wants
+	# plain library names rather than MSVC's *.lib file names.
+	target_compile_definitions(PCSX2_FLAGS INTERFACE PCSX2_DISABLE_D3D)
+	target_link_libraries(PCSX2_FLAGS INTERFACE
+		WIL::WIL
+		setupapi
+		ws2_32
+		shlwapi
+		iphlpapi
+		dsound
+		dxguid
+		dinput8
+		hid
+		powrprof
+		strmiids
+		opengl32
+		dwmapi
+	)
+elseif(WIN32)
 	target_link_libraries(PCSX2_FLAGS INTERFACE
 		WIL::WIL
 		D3D12MemAlloc
