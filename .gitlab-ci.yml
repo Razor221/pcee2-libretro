@@ -43,12 +43,15 @@
 include:
   - project: 'libretro-infrastructure/ci-templates'
     file: '/linux-cmake.yml'
-  # Windows: native MSVC 2019 template (provides .libretro-windows-msvc19-cmake-x86_64
-  # used by libretro-build-windows-x64 below). PCSX2 officially targets MSVC, so
-  # this builds with the supported toolchain instead of the old MinGW cross-build.
-  # Modelled on lrps2 (libretro/ps2), whose Windows core builds this way.
+  # Windows: MXE MinGW cross-build (provides .libretro-windows-cmake-x86_64 used
+  # by libretro-build-windows-x64 below). PCSX2 officially targets MSVC, but the
+  # buildbot's only MSVC runner is Visual Studio 2019 16.8 (cl 19.28), which is
+  # too old for the C++20 the code uses: no std::make_unique_for_overwrite in its
+  # STL, C2326 on constexpr pointers read inside lambdas (GSState::DumpVertices),
+  # C3615 on GSDevice11::OMBlendSelector. There is no msvc22 template in
+  # ci-templates, so cross-build with the MXE gcc11 toolchain instead.
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/windows-cmake-msvc19.yml'
+    file: '/windows-cmake-mingw.yml'
 
 # The stock libretro build images are ancient Ubuntu (xenial/bionic): their
 # CMake (3.20), gcc, and system libs (PNG 1.2, zstd, webp, lz4) are far too old
@@ -113,60 +116,42 @@ libretro-build-linux-aarch64:
     - *pcee2-setup-linux
     - *pcee2-deps-linux
 
-# Windows 64-bit (native MSVC 2019, on the buildbot's msvc2019 runner). PCSX2
-# officially targets MSVC, so unlike the old MinGW cross-build this uses the
-# supported toolchain. Modelled on lrps2 (libretro/ps2).
+# Windows 64-bit (MXE MinGW cross-build, on the Linux buildbot image). See the
+# include above for why this is not the MSVC job any more.
 #
 # find_package() in cmake/SearchForStuff.cmake REQUIREs PNG, JPEG, ZLIB, Zstd,
 # LZ4, WebP, SDL3, Freetype, plutovg, plutosvg, ryml and Shaderc. None of those
-# live in PCSX2's vendored 3rdparty, so — exactly like the Linux jobs build them
-# with build-deps-linux.sh into $CI_PROJECT_DIR/deps — the MSVC job builds them
-# with build-deps-windows.bat (static, into the same prefix) before configuring.
+# live in PCSX2's vendored 3rdparty, so — exactly like the Linux jobs — the deps
+# are built from source into $CI_PROJECT_DIR/deps first, here with the MXE cmake
+# wrapper (build-deps-linux.sh honours $CMAKE/$HOST for exactly this job).
 # Without it CMake configure fails immediately with "Could NOT find PNG/ZLIB".
 libretro-build-windows-x64:
   # Still experimental for pcee2 until proven green; keep it from failing the
   # pipeline (Linux x64/aarch64 are the shipping targets).
   allow_failure: true
   extends:
-    - .libretro-windows-msvc19-cmake-x86_64
+    - .libretro-windows-cmake-x86_64
     - .core-defs
   before_script:
-    # Keep the template's MSVC environment setup, then build the deps into
-    # $CI_PROJECT_DIR/deps. The deps build has to enter the developer prompt
-    # itself: the template calls VsDevCmd.bat through Invoke-Expression, which
-    # only configures a child process, so cl/ninja are not on PATH here (the
-    # template's own build step does not notice because the VS generator finds
-    # the toolchain on its own). ci-build-deps-windows.bat does the vcvars call
-    # and the deps build inside one cmd, like the GitHub Actions job does.
-    - !reference [.libretro-windows-msvc19-cmake, before_script]
+    - !reference [.libretro-windows-cmake, before_script]
+    # The MXE image is a build image, but the deps recipe additionally needs
+    # ninja, python3 (shaderc's git-sync-deps) and git.
+    - apt-get update && apt-get install -y --no-install-recommends ninja-build python3 git ca-certificates
     - |
-      if (-not (Test-Path "$Env:CI_PROJECT_DIR\deps\lib\shaderc_combined.lib")) {
-        cmd /c "pcee2-libretro\scripts\ci-build-deps-windows.bat" "$Env:CI_PROJECT_DIR\deps"
-        if ($LastExitCode -ne 0) { throw "dependency build failed" }
-      }
+      if [ ! -f "$CI_PROJECT_DIR/deps/lib/libshaderc_combined.a" ]; then
+        CMAKE=x86_64-w64-mingw32.static-cmake HOST=x86_64-w64-mingw32.static \
+          ./pcee2-libretro/scripts/build-deps-linux.sh "$CI_PROJECT_DIR/deps"
+      fi
   # Building ~15 static libraries from source on every pipeline is wasteful; key
   # the cache on the deps script so it is reused until the recipe changes.
   cache:
     key:
       files:
-        - pcee2-libretro/scripts/build-deps-windows.bat
+        - pcee2-libretro/scripts/build-deps-linux.sh
     paths:
       - deps/
   variables:
-    # Point CMake at the deps prefix we just built and link shaderc statically
-    # (shaderc_combined.lib), mirroring the Linux .core-defs but with MSVC paths
-    # (.lib, not .a). No CMAKE_FIND_ROOT_PATH here — that was an MXE/MinGW-only
-    # workaround; the native MSVC toolchain searches CMAKE_PREFIX_PATH normally.
-    CORE_ARGS: >-
-      -DCMAKE_BUILD_TYPE=Release
-      -DCMAKE_POLICY_VERSION_MINIMUM=3.18
-      -DENABLE_LIBRETRO=ON
-      -DENABLE_QT_UI=OFF
-      -DENABLE_TESTS=OFF
-      -DDISABLE_ADVANCE_SIMD=ON
-      -DSHADERC_STATIC=ON
-      -DCMAKE_PREFIX_PATH=$CI_PROJECT_DIR/deps
-      -DSHADERC_LIBRARY=$CI_PROJECT_DIR/deps/lib/shaderc_combined.lib
-    # MSVC is a multi-config generator; CMakeLists.txt sets RUNTIME_OUTPUT_DIRECTORY
-    # to bin, so the built .dll lands in bin/Release.
-    EXTRA_PATH: bin/Release
+    # CORE_ARGS comes from .core-defs unchanged: it already carries the MXE
+    # CMAKE_FIND_ROOT_PATH workaround and the static .a shaderc path.
+    # MinGW/Ninja is a single-config generator, so the .dll lands straight in bin.
+    EXTRA_PATH: bin
