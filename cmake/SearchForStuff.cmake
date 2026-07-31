@@ -39,7 +39,10 @@ endif()
 
 # Platform-specific dependencies.
 if (WIN32)
-	add_subdirectory(3rdparty/D3D12MemAlloc EXCLUDE_FROM_ALL)
+	# The directory is lowercase on disk; spelling it D3D12MemAlloc only works on
+	# a case-insensitive filesystem (i.e. when building on Windows itself). The
+	# MinGW cross-build runs on Linux and fails with "not an existing directory".
+	add_subdirectory(3rdparty/d3d12memalloc EXCLUDE_FROM_ALL)
 	add_subdirectory(3rdparty/winpixeventruntime EXCLUDE_FROM_ALL)
 	add_subdirectory(3rdparty/winwil EXCLUDE_FROM_ALL)
 	set(FFMPEG_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/3rdparty/ffmpeg/include")
