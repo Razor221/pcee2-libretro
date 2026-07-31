@@ -147,6 +147,14 @@ if [ -n "$HOST" ]; then
 	"$CMAKE" --build zlib/build --parallel "$NPROCS"
 	"$CMAKE" --install zlib/build
 
+	# zlib 1.3.2 installs its static archive as libzs.a, but CMake's FindZLIB
+	# only looks for z/zlib/zlibstatic - it then reports "Could NOT find ZLIB
+	# (missing: ZLIB_LIBRARY) (found version 1.3.2)", and FindPNG fails with it
+	# because it requires ZLIB. Provide the conventional name as well.
+	if [ -f "$PREFIX/lib/libzs.a" ] && [ ! -f "$PREFIX/lib/libz.a" ]; then
+		cp "$PREFIX/lib/libzs.a" "$PREFIX/lib/libz.a"
+	fi
+
 	# libpng needs the zlib we just installed, hence CMAKE_PREFIX_PATH.
 	clone https://github.com/pnggroup/libpng libpng "$LIBPNG"
 	"$CMAKE" -S libpng -B libpng/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
