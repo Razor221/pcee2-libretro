@@ -134,6 +134,7 @@ fi
 if [ -n "$HOST" ]; then
 	ZLIB=v1.3.2
 	LIBPNG=v1.6.58
+	DXHEADERS=v1.618.2
 	JPEGTURBO=3.1.3
 	ZSTD=v1.5.6
 	LZ4=v1.10.0
@@ -164,6 +165,16 @@ if [ -n "$HOST" ]; then
 		-DPNG_FRAMEWORK=OFF
 	"$CMAKE" --build libpng/build --parallel "$NPROCS"
 	"$CMAKE" --install libpng/build
+
+	# SearchForStuff.cmake does find_package(DirectX-Headers 1.618.1 REQUIRED)
+	# on Windows targets; MXE does not ship it either.
+	clone https://github.com/microsoft/DirectX-Headers DirectX-Headers "$DXHEADERS"
+	"$CMAKE" -S DirectX-Headers -B DirectX-Headers/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+		-DBUILD_SHARED_LIBS=OFF -DDXHEADERS_BUILD_TEST=OFF \
+		-DDXHEADERS_BUILD_GOOGLE_TEST=OFF -DDXHEADERS_INSTALL=ON
+	"$CMAKE" --build DirectX-Headers/build --parallel "$NPROCS"
+	"$CMAKE" --install DirectX-Headers/build
 
 	clone https://github.com/libjpeg-turbo/libjpeg-turbo libjpeg-turbo "$JPEGTURBO"
 	"$CMAKE" -S libjpeg-turbo -B libjpeg-turbo/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
