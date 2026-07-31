@@ -22,7 +22,7 @@
 #include <bit>
 #include <fstream>
 #include <sstream>
-#include <VersionHelpers.h>
+#include <versionhelpers.h>
 #include <d3dcompiler.h>
 #include <dxgidebug.h>
 

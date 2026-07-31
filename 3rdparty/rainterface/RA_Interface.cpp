@@ -6,7 +6,7 @@
 #include <string>
 
 #ifndef RA_NOPROGRESS
- #include <ShlObj.h>
+ #include <shlobj.h>
 #else
  #define IProgressDialog void
 #endif

@@ -8,7 +8,7 @@
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
 #include "common/StringUtil.h"
-#include <WinSock2.h>
+#include <winsock2.h>
 #include <iphlpapi.h>
 #endif
 

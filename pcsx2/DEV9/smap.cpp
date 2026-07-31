@@ -3,7 +3,7 @@
 
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
-#include <Winioctl.h>
+#include <winioctl.h>
 #endif
 #include <stdlib.h>
 #include <string.h>

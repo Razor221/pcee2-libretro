@@ -17,7 +17,7 @@
 #include "common/RedtapeWindows.h"
 #include <d3dcommon.h>
 #include <dxgi.h>
-#include <VersionHelpers.h>
+#include <versionhelpers.h>
 #if !defined(PCSX2_DISABLE_D3D)
 #include "GS/Renderers/DX11/D3D.h"
 #endif

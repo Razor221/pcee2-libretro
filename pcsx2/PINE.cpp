@@ -34,7 +34,7 @@
 		} \
 	} while (0)
 #include "common/RedtapeWindows.h"
-#include <WinSock2.h>
+#include <winsock2.h>
 #elif defined(__linux__) || defined(__FreeBSD__)
 #define read_portable(a, b, c) (read(a, b, c))
 #define write_portable(a, b, c) (send(a, b, c, MSG_NOSIGNAL))

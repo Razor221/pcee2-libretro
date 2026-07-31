@@ -11,7 +11,7 @@
 
 #include <mmsystem.h>
 #include <timeapi.h>
-#include <VersionHelpers.h>
+#include <versionhelpers.h>
 
 // If anything tries to read this as an initializer, we're in trouble.
 static const LARGE_INTEGER lfreq = []() {

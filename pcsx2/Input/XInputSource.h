@@ -7,7 +7,7 @@
 
 #include "common/RedtapeWindows.h"
 
-#include <Xinput.h>
+#include <xinput.h>
 #include <array>
 #include <functional>
 #include <mutex>

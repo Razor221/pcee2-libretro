@@ -7,7 +7,7 @@
 #include "common/StringUtil.h"
 #include "common/Timer.h"
 
-#include <VersionHelpers.h>
+#include <versionhelpers.h>
 #include <algorithm>
 
 #pragma comment(lib, "winhttp.lib")
