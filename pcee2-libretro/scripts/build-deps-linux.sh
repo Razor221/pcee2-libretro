@@ -124,16 +124,38 @@ if [ "${PCEE2_BUILD_PNG_ZSTD:-0}" = "1" ]; then
 	"$CMAKE" --install zstd/b
 fi
 
-# Windows (MinGW) only: the libretro MXE image lacks several system libraries
-# that the Linux jobs get from Ubuntu apt (JPEG, Zstd, LZ4, WebP — PNG/ZLIB are
-# present in MXE). Build them from source into the prefix for the cross-build.
+# Windows (MinGW) only: the libretro MXE image lacks the system libraries that
+# the Linux jobs get from Ubuntu apt. ZLIB and PNG were assumed to come from MXE,
+# but the cross-build's CMake configure fails with "Could NOT find ZLIB" and
+# "Could NOT find PNG (Required is at least version 1.6.40)", so build those from
+# source as well - same as build-deps-windows.bat does for the MSVC job.
 # Guarded by HOST, which is only set for the Windows cross job, so the Linux
 # x64/aarch64 jobs keep using their apt copies and don't pay for these builds.
 if [ -n "$HOST" ]; then
+	ZLIB=v1.3.2
+	LIBPNG=v1.6.58
 	JPEGTURBO=3.1.3
 	ZSTD=v1.5.6
 	LZ4=v1.10.0
 	WEBP=v1.6.0
+
+	clone https://github.com/madler/zlib zlib "$ZLIB"
+	"$CMAKE" -S zlib -B zlib/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+		-DZLIB_BUILD_SHARED=OFF -DZLIB_BUILD_STATIC=ON \
+		-DZLIB_BUILD_TESTING=OFF -DZLIB_BUILD_MINIZIP=OFF
+	"$CMAKE" --build zlib/build --parallel "$NPROCS"
+	"$CMAKE" --install zlib/build
+
+	# libpng needs the zlib we just installed, hence CMAKE_PREFIX_PATH.
+	clone https://github.com/pnggroup/libpng libpng "$LIBPNG"
+	"$CMAKE" -S libpng -B libpng/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_PREFIX_PATH="$PREFIX" \
+		-DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+		-DPNG_SHARED=OFF -DPNG_STATIC=ON -DPNG_TESTS=OFF -DPNG_TOOLS=OFF \
+		-DPNG_FRAMEWORK=OFF
+	"$CMAKE" --build libpng/build --parallel "$NPROCS"
+	"$CMAKE" --install libpng/build
 
 	clone https://github.com/libjpeg-turbo/libjpeg-turbo libjpeg-turbo "$JPEGTURBO"
 	"$CMAKE" -S libjpeg-turbo -B libjpeg-turbo/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
