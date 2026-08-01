@@ -13,8 +13,38 @@
 #ifndef __WIL_COM_INCLUDED
 #define __WIL_COM_INCLUDED
 
-#include <weakreference.h>
 #include <combaseapi.h>
+#if defined(__MINGW32__)
+// mingw-w64 ships no weakreference.h (it is a WinRT header from the Windows
+// SDK). WIL only needs these two interfaces from it, declared the way GCC's
+// __uuidof support expects; IInspectable comes from inspectable.h, which mingw
+// does provide.
+#include <inspectable.h>
+#ifndef __IWeakReference_INTERFACE_DEFINED__
+#define __IWeakReference_INTERFACE_DEFINED__
+extern "C++"
+{
+    struct IWeakReference : public IUnknown
+    {
+        virtual HRESULT STDMETHODCALLTYPE Resolve(REFIID riid, IInspectable** objectReference) = 0;
+    };
+}
+__CRT_UUID_DECL(IWeakReference, 0x00000037, 0x0000, 0x0000, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46)
+#endif
+#ifndef __IWeakReferenceSource_INTERFACE_DEFINED__
+#define __IWeakReferenceSource_INTERFACE_DEFINED__
+extern "C++"
+{
+    struct IWeakReferenceSource : public IUnknown
+    {
+        virtual HRESULT STDMETHODCALLTYPE GetWeakReference(IWeakReference** weakReference) = 0;
+    };
+}
+__CRT_UUID_DECL(IWeakReferenceSource, 0x00000038, 0x0000, 0x0000, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46)
+#endif
+#else
+#include <weakreference.h>
+#endif
 #include "result.h"
 #include "win32_helpers.h"
 #include "resource.h" // last to ensure _COMBASEAPI_H_ protected definitions are available
