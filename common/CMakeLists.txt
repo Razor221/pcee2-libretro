@@ -126,9 +126,13 @@ if(ARCH_X86)
 endif()
 
 if(WIN32)
-	enable_language(ASM_MASM)
+	# FastJmp.asm is MASM and needs ml, which MinGW does not have; there the
+	# equivalent routines are compiled from FastJmp.cpp as inline asm instead.
+	if(MSVC)
+		enable_language(ASM_MASM)
+		target_sources(common PRIVATE FastJmp.asm)
+	endif()
 	target_sources(common PRIVATE
-		FastJmp.asm
 		HTTPDownloaderWinHTTP.cpp
 		HTTPDownloaderWinHTTP.h
 		StackWalker.cpp

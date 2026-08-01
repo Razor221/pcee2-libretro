@@ -3,6 +3,72 @@
 
 #include "FastJmp.h"
 
+// MinGW has no MASM assembler (ml), so FastJmp.asm cannot be built there. Provide
+// the same routines as inline asm instead - note this is the Win64 ABI (first
+// argument in rcx, second in edx), not the SysV one used further down, and the
+// buffer layout matches FastJmp.asm exactly.
+#if defined(_WIN32) && defined(ARCH_X86) && defined(__MINGW32__)
+
+asm(
+	"\t.global fastjmp_set\n"
+	"\t.global fastjmp_jmp\n"
+	"\t.text\n"
+	"fastjmp_set:" R"(
+	movq 0(%rsp), %rax
+	movq %rsp, %rdx			# fixup stack pointer, so it doesn't include the call to fastjmp_set
+	addq $8, %rdx
+	movq %rax, 0(%rcx)	# actually rip
+	movq %rbx, 8(%rcx)
+	movq %rdx, 16(%rcx)	# actually rsp
+	movq %rbp, 24(%rcx)
+	movq %rsi, 32(%rcx)
+	movq %rdi, 40(%rcx)
+	movq %r12, 48(%rcx)
+	movq %r13, 56(%rcx)
+	movq %r14, 64(%rcx)
+	movq %r15, 72(%rcx)
+	movaps %xmm6, 80(%rcx)
+	movaps %xmm7, 96(%rcx)
+	movaps %xmm8, 112(%rcx)
+	addq $112, %rcx		# split to two batches to fit displacement in a single byte
+	movaps %xmm9, 16(%rcx)
+	movaps %xmm10, 32(%rcx)
+	movaps %xmm11, 48(%rcx)
+	movaps %xmm12, 64(%rcx)
+	movaps %xmm13, 80(%rcx)
+	movaps %xmm14, 96(%rcx)
+	movaps %xmm15, 112(%rcx)
+	xorl %eax, %eax
+	ret
+)"
+	"fastjmp_jmp:" R"(
+	movl %edx, %eax		# return code
+	movq 0(%rcx), %rdx	# actually rip
+	movq 8(%rcx), %rbx
+	movq 16(%rcx), %rsp
+	movq 24(%rcx), %rbp
+	movq 32(%rcx), %rsi
+	movq 40(%rcx), %rdi
+	movq 48(%rcx), %r12
+	movq 56(%rcx), %r13
+	movq 64(%rcx), %r14
+	movq 72(%rcx), %r15
+	movaps 80(%rcx), %xmm6
+	movaps 96(%rcx), %xmm7
+	movaps 112(%rcx), %xmm8
+	addq $112, %rcx		# split to two batches to fit displacement in a single byte
+	movaps 16(%rcx), %xmm9
+	movaps 32(%rcx), %xmm10
+	movaps 48(%rcx), %xmm11
+	movaps 64(%rcx), %xmm12
+	movaps 80(%rcx), %xmm13
+	movaps 96(%rcx), %xmm14
+	movaps 112(%rcx), %xmm15
+	jmp *%rdx
+)");
+
+#endif
+
 // Win32 uses Fastjmp.asm, because MSVC doesn't support inline asm.
 #if !defined(_WIN32) || defined(ARCH_ARM64)
 
