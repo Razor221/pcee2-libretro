@@ -46,6 +46,9 @@ if(WIN32)
 	target_compile_definitions(PCSX2_FLAGS INTERFACE
 		WINVER=${MIN_WIN32}
 		_WIN32_WINNT=${MIN_WIN32}
+		# See RedtapeWindows.h: MinGW needs NTDDI_VERSION as well to expose the
+		# Windows 10 1803 APIs.
+		NTDDI_VERSION=0x0A000005
 		WIN32_LEAN_AND_MEAN
 		WIL_SUPPRESS_EXCEPTIONS
 	)

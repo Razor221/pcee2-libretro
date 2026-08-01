@@ -18,6 +18,16 @@
 #endif
 #define _WIN32_WINNT 0x0A00 // Windows 10
 
+// mingw-w64 gates the Windows 10 1803 APIs the emulator uses - VirtualAlloc2(),
+// UnmapViewOfFile2(), MEM_*_PLACEHOLDER, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+// - behind NTDDI_VERSION, which otherwise defaults to plain Windows 10 and
+// hides them. The Windows SDK exposes them from _WIN32_WINNT alone, so MSVC
+// never needed this.
+#ifdef NTDDI_VERSION
+#undef NTDDI_VERSION
+#endif
+#define NTDDI_VERSION 0x0A000005 // NTDDI_WIN10_RS4 (1803)
+
 #include <windows.h>
 
 #endif

@@ -8,8 +8,11 @@
 #include <bit>
 #include <cstring>
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 
+// MinGW declares _BitScanReverse in <intrin.h> too (via psdk_inc/intrin-impl.h,
+// pulled in by <windows.h>), and its return type is unsigned char - defining
+// our own below made those two declarations ambiguate each other.
 #include <intrin.h>
 
 #else
