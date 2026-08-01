@@ -7,6 +7,11 @@
 
 #include <bit>
 #include <cstddef>
+// MSVC pulls <cstring> in transitively, GCC/MinGW does not, and a lot of the
+// tree calls std::strlen/std::memcpy without including it - the MinGW
+// cross-build fails on those one file at a time. Pcsx2Defs.h is included nearly
+// everywhere, so pull it in here instead of touching a hundred files.
+#include <cstring>
 
 // --------------------------------------------------------------------------------------
 // Dev / Debug conditionals - Consts for using if() statements instead of uglier #ifdef.

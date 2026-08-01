@@ -6,6 +6,7 @@
 #include "HostSys.h"
 #include "Threading.h"
 
+#include <cstring>
 #include <mutex>
 
 #ifdef _WIN32
