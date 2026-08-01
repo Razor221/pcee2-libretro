@@ -5,6 +5,17 @@
 #include "common/RedtapeWindows.h"
 #include <iphlpapi.h>
 #include <icmpapi.h>
+
+#ifdef __MINGW32__
+// mingw-w64's icmpapi.h stops at IcmpSendEcho2, but iphlpapi.dll exports the Ex
+// variant (Vista and later) and mingw's own import library has it, so only the
+// prototype is missing.
+extern "C" DWORD WINAPI IcmpSendEcho2Ex(HANDLE IcmpHandle, HANDLE Event,
+	PIO_APC_ROUTINE ApcRoutine, PVOID ApcContext, IPAddr SourceAddress,
+	IPAddr DestinationAddress, LPVOID RequestData, WORD RequestSize,
+	PIP_OPTION_INFORMATION RequestOptions, LPVOID ReplyBuffer, DWORD ReplySize,
+	DWORD Timeout);
+#endif
 #elif defined(__POSIX__)
 
 #if defined(__linux__)
