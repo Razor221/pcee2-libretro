@@ -13,7 +13,7 @@
 #ifndef __WIL_COM_INCLUDED
 #define __WIL_COM_INCLUDED
 
-#include <WeakReference.h>
+#include <weakreference.h>
 #include <combaseapi.h>
 #include "result.h"
 #include "win32_helpers.h"

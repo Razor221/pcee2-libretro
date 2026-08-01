@@ -28,7 +28,7 @@
 #define SECURITY_WIN32
 #endif
 /// @endcond
-#include <Security.h>
+#include <security.h>
 
 namespace wil
 {

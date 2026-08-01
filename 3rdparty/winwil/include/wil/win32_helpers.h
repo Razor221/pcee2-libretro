@@ -16,7 +16,7 @@
 #include <minwindef.h>    // FILETIME, HINSTANCE
 #include <sysinfoapi.h>   // GetSystemTimeAsFileTime
 #include <libloaderapi.h> // GetProcAddress
-#include <Psapi.h>        // GetModuleFileNameExW (macro), K32GetModuleFileNameExW
+#include <psapi.h>        // GetModuleFileNameExW (macro), K32GetModuleFileNameExW
 #include <winreg.h>
 #include <objbase.h>
 

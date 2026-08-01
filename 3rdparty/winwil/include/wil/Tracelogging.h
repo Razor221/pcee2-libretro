@@ -31,8 +31,8 @@
 #endif
 #undef RESOURCE_SUPPRESS_STL
 #include <winmeta.h>
-#include <TraceLoggingProvider.h>
-#include <TraceLoggingActivity.h>
+#include <traceloggingprovider.h>
+#include <traceloggingactivity.h>
 #ifndef __WIL_TRACELOGGING_CONFIG_H
 #include <wil/traceloggingconfig.h>
 #endif

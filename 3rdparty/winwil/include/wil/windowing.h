@@ -11,7 +11,7 @@
 #ifndef __WIL_WINDOWING_INCLUDED
 #define __WIL_WINDOWING_INCLUDED
 
-#include <WinUser.h>
+#include <winuser.h>
 #include <exception>
 
 #include "common.h"

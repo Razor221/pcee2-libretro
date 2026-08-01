@@ -17,7 +17,7 @@
 #ifdef __MINGW32__
 #include <windows.h>
 #else
-#include <Windows.h>
+#include <windows.h>
 #endif
 #include <unknwn.h>
 #include <inspectable.h>

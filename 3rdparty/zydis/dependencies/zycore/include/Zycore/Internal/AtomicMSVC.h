@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#include <Windows.h>
+#include <windows.h>
 
 #include <Zycore/Defines.h>
 #include <Zycore/Types.h>

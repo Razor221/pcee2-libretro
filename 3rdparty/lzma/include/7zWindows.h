@@ -37,7 +37,7 @@ Igor Pavlov : Public domain */
 // #if defined(__GNUC__) && !defined(__clang__)
 #include <windows.h>
 #else
-#include <Windows.h>
+#include <windows.h>
 #endif
 // #include <basetsd.h>
 // #include <wtypes.h>

@@ -20,7 +20,7 @@
 #include <new>
 #include <combaseapi.h> // Needed for CoTaskMemFree() used in output of some helpers.
 #include <winbase.h>    // LocalAlloc
-#include <PathCch.h>
+#include <pathcch.h>
 #include "wistd_type_traits.h"
 #include "result.h"
 #include "win32_helpers.h"
