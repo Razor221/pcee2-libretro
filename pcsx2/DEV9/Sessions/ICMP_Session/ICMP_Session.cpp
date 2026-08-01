@@ -10,8 +10,10 @@
 // mingw-w64's icmpapi.h stops at IcmpSendEcho2, but iphlpapi.dll exports the Ex
 // variant (Vista and later) and mingw's own import library has it, so only the
 // prototype is missing.
+// ApcRoutine is PIO_APC_ROUTINE in the SDK; mingw-w64 does not declare that type
+// here, and this call passes null for it, so a plain pointer keeps the ABI.
 extern "C" DWORD WINAPI IcmpSendEcho2Ex(HANDLE IcmpHandle, HANDLE Event,
-	PIO_APC_ROUTINE ApcRoutine, PVOID ApcContext, IPAddr SourceAddress,
+	PVOID ApcRoutine, PVOID ApcContext, IPAddr SourceAddress,
 	IPAddr DestinationAddress, LPVOID RequestData, WORD RequestSize,
 	PIP_OPTION_INFORMATION RequestOptions, LPVOID ReplyBuffer, DWORD ReplySize,
 	DWORD Timeout);
