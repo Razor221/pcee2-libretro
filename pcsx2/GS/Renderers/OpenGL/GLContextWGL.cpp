@@ -14,12 +14,14 @@
 
 static void* GetProcAddressCallback(const char* name)
 {
-	void* addr = wglGetProcAddress(name);
+	// MSVC lets PROC/FARPROC convert to void* implicitly; GCC does not, so the
+	// casts are spelled out here for MinGW's sake.
+	void* addr = reinterpret_cast<void*>(wglGetProcAddress(name));
 	if (addr)
 		return addr;
 
 	// try opengl32.dll
-	return ::GetProcAddress(GetModuleHandleA("opengl32.dll"), name);
+	return reinterpret_cast<void*>(::GetProcAddress(GetModuleHandleA("opengl32.dll"), name));
 }
 
 static bool ReloadWGL(HDC dc)
