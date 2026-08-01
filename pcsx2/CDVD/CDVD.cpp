@@ -1006,7 +1006,7 @@ void cdvdReset()
 		const std::time_t input_time = std::time(nullptr) + GMT9_OFFSET_SECONDS;
 		const std::time_t resulting_time = input_time - GMT9_OFFSET_SECONDS + bios_settings_offset_seconds;
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 		gmtime_s(&input_tm, &input_time);
 		gmtime_s(&resulting_tm, &resulting_time);
 #else

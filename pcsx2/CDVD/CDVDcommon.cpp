@@ -381,7 +381,7 @@ bool DoCDVDopen(Error* error)
 #ifdef ENABLE_TIMESTAMPS
 	std::time_t curtime_t = std::time(nullptr);
 	struct tm curtime = {};
-#ifdef _MSC_VER
+#ifdef _WIN32
 	localtime_s(&curtime, &curtime_t);
 #else
 	localtime_r(&curtime_t, &curtime);
