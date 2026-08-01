@@ -1,3 +1,12 @@
+// MinGW: WIL does not build with GCC (its unique_any machinery, RoGetAgileReference
+// and friends), so the whole header is replaced by the small stand-in in
+// mingw_wil.h. The guard has to wrap the entire file: WIL closes its own
+// __WIL_RESOURCE / __WIL_COM section part-way through and opens further ones,
+// so a guard placed after the first #ifndef ends early and the rest of the
+// header compiles anyway - which is exactly what happened before.
+#if defined(__MINGW32__)
+#include "mingw_wil.h"
+#else
 //*********************************************************
 //
 //    Copyright (c) Microsoft. All rights reserved.
@@ -27,12 +36,6 @@
 
 #ifndef __WIL_RESOURCE
 #define __WIL_RESOURCE
-
-#if defined(__MINGW32__)
-// WIL itself does not build with GCC (see mingw_wil.h); use the small
-// replacement for the pieces this tree uses.
-#include "mingw_wil.h"
-#else
 
 /// @cond
 // stdint.h and intsafe.h have conflicting definitions, so it's not safe to include either to pick up our dependencies,
@@ -8355,5 +8358,4 @@ namespace details
 } // namespace wil
 
 #pragma warning(pop)
-
-#endif // __MINGW32__
+#endif // !__MINGW32__

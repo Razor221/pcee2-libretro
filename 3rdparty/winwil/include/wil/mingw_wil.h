@@ -86,6 +86,50 @@ public:
         return p;
     }
 
+    //! Address of the held pointer, without releasing it - for APIs that read
+    //! an array of interface pointers.
+    T* const* addressof() const { return &m_ptr; }
+    T** addressof() { return &m_ptr; }
+
+    //! QueryInterface, returning an empty pointer when the interface is absent.
+    template <typename U>
+    com_ptr_nothrow<U> try_query() const
+    {
+        com_ptr_nothrow<U> result;
+        if (m_ptr)
+        {
+            U* raw = nullptr;
+            if (SUCCEEDED(m_ptr->QueryInterface(__uuidof(U), reinterpret_cast<void**>(&raw))) && raw)
+            {
+                result.attach(raw);
+            }
+        }
+        return result;
+    }
+
+    template <typename U>
+    HRESULT query_to(U** out) const
+    {
+        return m_ptr ? m_ptr->QueryInterface(__uuidof(U), reinterpret_cast<void**>(out)) : E_POINTER;
+    }
+
+    HRESULT copy_to(T** out) const
+    {
+        if (!out)
+            return E_POINTER;
+        *out = m_ptr;
+        if (m_ptr)
+            m_ptr->AddRef();
+        return S_OK;
+    }
+
+    //! Takes ownership of an already-referenced pointer.
+    void attach(T* p)
+    {
+        reset();
+        m_ptr = p;
+    }
+
 private:
     T* m_ptr = nullptr;
 };
