@@ -1196,7 +1196,7 @@ std::string GameList::FormatTimestamp(std::time_t timestamp)
 		struct tm ctime = {};
 		struct tm ttime = {};
 		const std::time_t ctimestamp = std::time(nullptr);
-#ifdef _MSC_VER
+#ifdef _WIN32
 		localtime_s(&ctime, &ctimestamp);
 		localtime_s(&ttime, &timestamp);
 #else

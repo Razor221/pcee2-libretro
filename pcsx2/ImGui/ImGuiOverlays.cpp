@@ -1829,7 +1829,7 @@ std::string SaveStateSelectorUI::GetSaveStateTimestampSummary(const std::time_t&
 {
 
 	std::tm tm_modification_local = {};
-#ifdef _MSC_VER
+#ifdef _WIN32
 	localtime_s(&tm_modification_local, &modification_time);
 #else
 	localtime_r(&modification_time, &tm_modification_local);

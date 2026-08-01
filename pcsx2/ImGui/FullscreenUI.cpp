@@ -51,7 +51,7 @@
 TinyString FullscreenUI::TimeToPrintableString(time_t t)
 {
 	struct tm lt = {};
-#ifdef _MSC_VER
+#ifdef _WIN32
 	localtime_s(&lt, &t);
 #else
 	localtime_r(&t, &lt);
@@ -1293,7 +1293,7 @@ void FullscreenUI::DrawLandingTemplate(ImVec2* menu_pos, ImVec2* menu_size)
 			const auto utc_now = std::chrono::system_clock::now();
 			const auto utc_time_t = std::chrono::system_clock::to_time_t(utc_now);
 			std::tm tm_local = {};
-#ifdef _MSC_VER
+#ifdef _WIN32
 			localtime_s(&tm_local, &utc_time_t);
 #else
 			localtime_r(&utc_time_t, &tm_local);
@@ -1630,7 +1630,7 @@ void FullscreenUI::DrawPauseMenu(MainWindowType type)
 		char buf[256];
 		struct tm ltime;
 		const std::time_t ctime(std::time(nullptr));
-#ifdef _MSC_VER
+#ifdef _WIN32
 		localtime_s(&ltime, &ctime);
 #else
 		localtime_r(&ctime, &ltime);
