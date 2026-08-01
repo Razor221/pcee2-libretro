@@ -107,7 +107,9 @@ void InitNet()
 	rx_thread = std::thread(NetRxThread);
 
 #ifdef _WIN32
-	SetThreadPriority(rx_thread.native_handle(), THREAD_PRIORITY_HIGHEST);
+	// MSVC's native_handle_type is already HANDLE; mingw-w64's win32 thread model
+	// hands out a uintptr_t holding the same handle.
+	SetThreadPriority(reinterpret_cast<HANDLE>(rx_thread.native_handle()), THREAD_PRIORITY_HIGHEST);
 #elif defined(__POSIX__)
 	int policy = 0;
 	sched_param param;
