@@ -78,7 +78,7 @@ namespace HostMemoryMap
 	// For debuggers
 	extern "C" {
 #ifdef _WIN32
-	_declspec(dllexport) uptr EEmem, IOPmem, VUmem;
+	__declspec(dllexport) uptr EEmem, IOPmem, VUmem;
 #else
 	__attribute__((visibility("default"), used)) uptr EEmem, IOPmem, VUmem;
 #endif
