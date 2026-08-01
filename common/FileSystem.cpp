@@ -32,6 +32,13 @@
 #include <io.h>
 #include <malloc.h>
 #include <pathcch.h>
+
+// mingw-w64's pathcch.h declares the functions but not all of the PATHCCH_*
+// option flags, so define the one we use if it is missing. Value from the
+// Windows SDK's PATHCCH_OPTIONS enumeration.
+#ifndef PATHCCH_ENSURE_IS_EXTENDED_LENGTH_PATH
+#define PATHCCH_ENSURE_IS_EXTENDED_LENGTH_PATH 0x00000010
+#endif
 #include <winioctl.h>
 #include <share.h>
 #include <shlobj.h>
