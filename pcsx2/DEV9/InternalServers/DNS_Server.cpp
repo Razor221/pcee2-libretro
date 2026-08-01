@@ -279,7 +279,8 @@ namespace InternalServers
 		data->session = this;
 		data->url = url;
 
-		const int ret = GetAddrInfoExW(converted_string.data(), nullptr, NS_ALL, 0, &hints, (ADDRINFOEXW**)&data->result, nullptr, &data->overlapped, &DNS_Server::GetAddrInfoExCallback, &data->cancelHandle);
+		const int ret = GetAddrInfoExW(converted_string.data(), nullptr, NS_ALL, 0, &hints, (ADDRINFOEXW**)&data->result, nullptr, &data->overlapped, (LPLOOKUPSERVICE_COMPLETION_ROUTINE)&DNS_Server::GetAddrInfoExCallback,
+			&data->cancelHandle);
 		if (ret == WSA_IO_PENDING)
 			return;
 		else
@@ -296,8 +297,11 @@ namespace InternalServers
 			case NO_ERROR:
 			{
 				ADDRINFOEXW* addrInfo = (ADDRINFOEXW*)data->result;
+				// mingw-w64 declares both addrinfoexW and addrinfoExW and has
+				// ai_next point at the former, so this walk needs a cast there;
+				// on MSVC the two types are the same and it is a no-op.
 				while (addrInfo != nullptr && addrInfo->ai_family != AF_INET)
-					addrInfo = addrInfo->ai_next;
+					addrInfo = (ADDRINFOEXW*)addrInfo->ai_next;
 
 				if (addrInfo == nullptr)
 				{
