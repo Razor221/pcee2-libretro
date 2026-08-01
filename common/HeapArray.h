@@ -11,6 +11,12 @@
 #include <cstring>
 #include <type_traits>
 
+#ifdef _WIN32
+// _aligned_malloc() and friends; MinGW has them too, POSIX's posix_memalign()
+// is what it lacks.
+#include <malloc.h>
+#endif
+
 template <typename T, std::size_t SIZE, std::size_t ALIGNMENT = 0>
 class FixedHeapArray
 {
@@ -102,7 +108,7 @@ private:
 	{
 		if constexpr (ALIGNMENT > 0)
 		{
-#ifdef _MSC_VER
+#ifdef _WIN32
 			m_data = static_cast<T*>(_aligned_malloc(SIZE * sizeof(T), ALIGNMENT));
 			if (!m_data)
 				pxFailRel("Memory allocation failed.");
@@ -122,7 +128,7 @@ private:
 	{
 		if constexpr (ALIGNMENT > 0)
 		{
-#ifdef _MSC_VER
+#ifdef _WIN32
 			_aligned_free(m_data);
 #else
 			std::free(m_data);
@@ -345,7 +351,7 @@ private:
 	{
 		if constexpr (alignment > 0)
 		{
-#ifdef _MSC_VER
+#ifdef _WIN32
 			m_data = static_cast<T*>(_aligned_realloc(prev_ptr, size * sizeof(T), alignment));
 			if (!m_data)
 				pxFailRel("Memory allocation failed.");
@@ -373,7 +379,7 @@ private:
 	{
 		if constexpr (alignment > 0)
 		{
-#ifdef _MSC_VER
+#ifdef _WIN32
 			_aligned_free(m_data);
 #else
 			std::free(m_data);
