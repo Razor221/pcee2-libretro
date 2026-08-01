@@ -13,6 +13,12 @@
 #ifndef __WIL_COM_INCLUDED
 #define __WIL_COM_INCLUDED
 
+#if defined(__MINGW32__)
+// WIL itself does not build with GCC (see mingw_wil.h); use the small
+// replacement for the pieces this tree uses.
+#include "mingw_wil.h"
+#else
+
 #include <combaseapi.h>
 #include "mingw_compat.h"
 #if defined(__MINGW32__)
@@ -3479,3 +3485,5 @@ using com_timeout_failfast = com_timeout_t<err_failfast_policy>;
 } // namespace wil
 
 #endif
+
+#endif // __MINGW32__

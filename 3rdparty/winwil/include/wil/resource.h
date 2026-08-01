@@ -28,6 +28,12 @@
 #ifndef __WIL_RESOURCE
 #define __WIL_RESOURCE
 
+#if defined(__MINGW32__)
+// WIL itself does not build with GCC (see mingw_wil.h); use the small
+// replacement for the pieces this tree uses.
+#include "mingw_wil.h"
+#else
+
 /// @cond
 // stdint.h and intsafe.h have conflicting definitions, so it's not safe to include either to pick up our dependencies,
 // so the definitions we need are copied below
@@ -8349,3 +8355,5 @@ namespace details
 } // namespace wil
 
 #pragma warning(pop)
+
+#endif // __MINGW32__
