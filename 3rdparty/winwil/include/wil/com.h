@@ -14,6 +14,7 @@
 #define __WIL_COM_INCLUDED
 
 #include <combaseapi.h>
+#include "mingw_compat.h"
 #if defined(__MINGW32__)
 // mingw-w64 ships no weakreference.h (it is a WinRT header from the Windows
 // SDK). WIL only needs these two interfaces from it, declared the way GCC's

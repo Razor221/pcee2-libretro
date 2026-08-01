@@ -17,6 +17,7 @@
 // WARNING:
 // Code within this scope must satisfy both C99 and C++
 
+#include "mingw_compat.h"
 #include "common.h"
 
 #if !defined(__WIL_MIN_KERNEL) && !defined(WIL_KERNEL_MODE)
