@@ -93,7 +93,10 @@ static constexpr unsigned int __pagealignsize = 0x1000;
 // --------------------------------------------------------------------------------------
 
 // SysV ABI passes vector parameters through registers unconditionally.
-#ifndef _WIN32
+// __vectorcall itself is an MSVC extension: clang implements it on Windows, but
+// GCC does not, so define it away for MinGW too. The whole build sees the same
+// macro, and these are all internal functions, so the ABI stays consistent.
+#if !defined(_WIN32) || (defined(__GNUC__) && !defined(__clang__))
 #define __vectorcall
 #endif
 
