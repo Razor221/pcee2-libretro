@@ -20,7 +20,7 @@
 #include "fmt/format.h"
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
-#include <KnownFolders.h>
+#include <knownfolders.h>
 #include <shlobj.h>
 #endif
 

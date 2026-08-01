@@ -9,10 +9,10 @@
 
 #include <stdio.h>
 #include <winsock2.h>
-#include <WS2tcpip.h>
+#include <ws2tcpip.h>
 #include <iphlpapi.h>
 
-#include <Netcfgx.h>
+#include <netcfgx.h>
 #include <devguid.h>
 
 #include <tchar.h>

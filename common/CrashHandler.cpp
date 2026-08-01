@@ -14,7 +14,7 @@
 #include "RedtapeWindows.h"
 
 #include "StackWalker.h"
-#include <DbgHelp.h>
+#include <dbghelp.h>
 
 class CrashHandlerStackWalker : public StackWalker
 {
