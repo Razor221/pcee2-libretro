@@ -278,6 +278,7 @@ void Threading::SetNameOfCurrentThread(const char* name)
 	info.dwThreadID = GetCurrentThreadId();
 	info.dwFlags = 0;
 
+#if defined(_MSC_VER)
 	__try
 	{
 		RaiseException(MS_VC_EXCEPTION, 0, sizeof(info) / sizeof(ULONG_PTR), (ULONG_PTR*)&info);
@@ -285,5 +286,10 @@ void Threading::SetNameOfCurrentThread(const char* name)
 	__except (EXCEPTION_EXECUTE_HANDLER)
 	{
 	}
+#else
+	// No __try/__except on GCC/MinGW. This only names the thread for a debugger
+	// that is already attached, so skipping it costs nothing at runtime.
+	(void)info;
+#endif
 #endif
 }

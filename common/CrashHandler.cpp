@@ -70,6 +70,8 @@ static bool WriteMinidump(HMODULE hDbgHelp, HANDLE hFile, HANDLE hProcess, DWORD
 		return minidump_write_dump(hProcess, process_id, hFile, type, &mei, nullptr, nullptr);
 	}
 
+#if defined(_MSC_VER)
+	// Raise an exception purely to capture the caller's context for the dump.
 	__try
 	{
 		RaiseException(EXCEPTION_INVALID_HANDLE, 0, 0, nullptr);
@@ -79,6 +81,13 @@ static bool WriteMinidump(HMODULE hDbgHelp, HANDLE hFile, HANDLE hProcess, DWORD
 		EXCEPTION_EXECUTE_HANDLER)
 	{
 	}
+#else
+	// GCC/MinGW has no __try/__except, so the context cannot be captured this
+	// way. Write the dump without exception information instead - it loses the
+	// faulting context but keeps the rest of the process state.
+	return WriteMinidump(hDbgHelp, hFile, GetCurrentProcess(), GetCurrentProcessId(), GetCurrentThreadId(),
+		nullptr, type);
+#endif
 
 	return true;
 }
