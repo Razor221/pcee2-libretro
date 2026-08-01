@@ -1316,7 +1316,9 @@ typedef std::vector<uint32_t> U32Vec;
 	#define XBYAK_WINSDK_HAS_RELATIONSHIP_GROUP_AFFINITY 0
 #endif
 
-#if (defined(NTDDI_VERSION) && NTDDI_VERSION >= 0x0A000000) || (defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0A00)
+// mingw-w64's PROCESSOR_RELATIONSHIP has no EfficiencyClass member regardless of
+// the version macros, so the affinity fallback has to be used there.
+#if !defined(__MINGW32__) && ((defined(NTDDI_VERSION) && NTDDI_VERSION >= 0x0A000000) || (defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0A00))
 	#define XBYAK_WINSDK_HAS_EFFICIENCY_CLASS 1
 #else
 	#define XBYAK_WINSDK_HAS_EFFICIENCY_CLASS 0
