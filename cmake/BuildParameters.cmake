@@ -168,9 +168,12 @@ if(WIN32 AND NOT MSVC)
 	# hence the duplicates. static is rejected for the same reason ("declared
 	# extern and later static"), so the definitions are made weak instead and
 	# the linker keeps one. The escaped space keeps it a single -D argument.
-	string(APPEND CMAKE_C_FLAGS " -DFORCEINLINE=__inline__\\ __attribute__((__weak__))")
-	string(APPEND CMAKE_CXX_FLAGS " -DFORCEINLINE=__inline__\\ __attribute__((__weak__))")
-	message(STATUS "MinGW: FORCEINLINE=weak __inline__, C++ extensions on")
+	# Carried in a force-included header rather than a -D: the definition needs
+	# parentheses, and those do not survive the shell when make expands the
+	# compile line.
+	string(APPEND CMAKE_C_FLAGS " -include ${CMAKE_SOURCE_DIR}/cmake/mingw_forceinline.h")
+	string(APPEND CMAKE_CXX_FLAGS " -include ${CMAKE_SOURCE_DIR}/cmake/mingw_forceinline.h")
+	message(STATUS "MinGW: force-including cmake/mingw_forceinline.h, C++ extensions on")
 endif()
 
 if(MSVC AND NOT USE_CLANG_CL)
