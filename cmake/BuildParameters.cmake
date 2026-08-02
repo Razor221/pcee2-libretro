@@ -160,7 +160,12 @@ if(WIN32 AND NOT MSVC)
 	# that has it), so every translation unit emitted an external definition.
 	# Defining it here covers the files that reach windows.h without going
 	# through RedtapeWindows.h first.
-	add_compile_definitions(FORCEINLINE=__inline__)
+	# Set through the flags rather than add_compile_definitions() so that it is
+	# carried into every subdirectory and both languages - the 3rdparty C
+	# libraries (libzip, glad) hit the same problem.
+	string(APPEND CMAKE_C_FLAGS " -DFORCEINLINE=__inline__")
+	string(APPEND CMAKE_CXX_FLAGS " -DFORCEINLINE=__inline__")
+	message(STATUS "MinGW: FORCEINLINE=__inline__, C++ extensions on")
 endif()
 
 if(MSVC AND NOT USE_CLANG_CL)
