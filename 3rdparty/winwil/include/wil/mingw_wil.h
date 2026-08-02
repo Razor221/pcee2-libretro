@@ -212,18 +212,38 @@ public:
     ~unique_variant() { VariantClear(this); }
 };
 
-//! Calls CoUninitialize() on scope exit.
+//! Calls CoUninitialize() on scope exit. Default-constructed it is armed;
+//! unique_couninitialize_call{false} is not, as in WIL's unique_call.
 class unique_couninitialize_call
 {
 public:
     unique_couninitialize_call() = default;
+    explicit unique_couninitialize_call(bool armed) : m_armed(armed) {}
     unique_couninitialize_call(const unique_couninitialize_call&) = delete;
     unique_couninitialize_call& operator=(const unique_couninitialize_call&) = delete;
-    ~unique_couninitialize_call()
+    unique_couninitialize_call(unique_couninitialize_call&& o) noexcept : m_armed(o.m_armed) { o.m_armed = false; }
+    unique_couninitialize_call& operator=(unique_couninitialize_call&& o) noexcept
+    {
+        if (this != &o)
+        {
+            reset();
+            m_armed = o.m_armed;
+            o.m_armed = false;
+        }
+        return *this;
+    }
+    ~unique_couninitialize_call() { reset(); }
+
+    //! Calls CoUninitialize() now, if armed.
+    void reset()
     {
         if (m_armed)
+        {
+            m_armed = false;
             CoUninitialize();
+        }
     }
+    //! Disarms without calling CoUninitialize().
     void release() { m_armed = false; }
 
 private:
