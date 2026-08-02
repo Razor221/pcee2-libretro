@@ -153,6 +153,14 @@ if(WIN32 AND NOT MSVC)
 	# translation unit, and the link then drowns in thousands of "multiple
 	# definition" errors. -std=gnu++20 gives them C++ inline semantics.
 	set(CMAKE_CXX_EXTENSIONS ON)
+	# mingw's headers declare their small helpers - GetCurrentFiber(),
+	# NtCurrentTeb(), InterlockedExchangeSubtract(), the Tp* and SH* families -
+	# as FORCEINLINE, which resolves to Pcsx2Defs.h's __forceinline; that one
+	# deliberately omits the inline keyword (__forceinline_odr is the variant
+	# that has it), so every translation unit emitted an external definition.
+	# Defining it here covers the files that reach windows.h without going
+	# through RedtapeWindows.h first.
+	add_compile_definitions(FORCEINLINE=__inline__)
 endif()
 
 if(MSVC AND NOT USE_CLANG_CL)
