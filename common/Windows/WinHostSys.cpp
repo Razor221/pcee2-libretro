@@ -15,11 +15,9 @@
 #include <mutex>
 
 #ifdef __MINGW32__
-// VirtualAlloc2(), MapViewOfFile3() and UnmapViewOfFile2() are exported by
-// kernelbase.dll and reached through OneCore.lib in the Windows SDK; MXE's
-// mingw-w64 ships no import library that carries them, so they are resolved at
-// runtime instead. They exist on every Windows 10 1803 or newer, which is what
-// the emulator requires anyway.
+// The three Windows 10 1803 memory APIs the emulator uses have no import
+// library in MXE's mingw-w64, so they are looked up in kernelbase.dll on first
+// use. RedtapeWindows.h points every caller at these wrappers.
 namespace
 {
 	template <typename T>
@@ -30,7 +28,7 @@ namespace
 	}
 } // namespace
 
-static PVOID WINAPI VirtualAlloc2Shim(HANDLE Process, PVOID BaseAddress, SIZE_T Size, ULONG AllocationType,
+extern "C" PVOID WINAPI pcsx2_VirtualAlloc2(HANDLE Process, PVOID BaseAddress, SIZE_T Size, ULONG AllocationType,
 	ULONG PageProtection, MEM_EXTENDED_PARAMETER* ExtendedParameters, ULONG ParameterCount)
 {
 	using Fn = PVOID(WINAPI*)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*, ULONG);
@@ -38,7 +36,7 @@ static PVOID WINAPI VirtualAlloc2Shim(HANDLE Process, PVOID BaseAddress, SIZE_T 
 	return fn ? fn(Process, BaseAddress, Size, AllocationType, PageProtection, ExtendedParameters, ParameterCount) : nullptr;
 }
 
-static PVOID WINAPI MapViewOfFile3Shim(HANDLE FileMapping, HANDLE Process, PVOID BaseAddress, ULONG64 Offset,
+extern "C" PVOID WINAPI pcsx2_MapViewOfFile3(HANDLE FileMapping, HANDLE Process, PVOID BaseAddress, ULONG64 Offset,
 	SIZE_T ViewSize, ULONG AllocationType, ULONG PageProtection, MEM_EXTENDED_PARAMETER* ExtendedParameters,
 	ULONG ParameterCount)
 {
@@ -49,16 +47,12 @@ static PVOID WINAPI MapViewOfFile3Shim(HANDLE FileMapping, HANDLE Process, PVOID
 				nullptr;
 }
 
-static BOOL WINAPI UnmapViewOfFile2Shim(HANDLE Process, PVOID BaseAddress, ULONG UnmapFlags)
+extern "C" BOOL WINAPI pcsx2_UnmapViewOfFile2(HANDLE Process, PVOID BaseAddress, ULONG UnmapFlags)
 {
 	using Fn = BOOL(WINAPI*)(HANDLE, PVOID, ULONG);
 	static const Fn fn = LoadKernelBaseFunction<Fn>("UnmapViewOfFile2");
 	return fn ? fn(Process, BaseAddress, UnmapFlags) : FALSE;
 }
-
-#define VirtualAlloc2 VirtualAlloc2Shim
-#define MapViewOfFile3 MapViewOfFile3Shim
-#define UnmapViewOfFile2 UnmapViewOfFile2Shim
 #endif
 
 static DWORD ConvertToWinApi(const PageProtectionMode& mode)

@@ -44,6 +44,25 @@
 
 #include <windows.h>
 
+#ifdef __MINGW32__
+// VirtualAlloc2(), MapViewOfFile3() and UnmapViewOfFile2() are exported by
+// kernelbase.dll and reached through OneCore.lib in the Windows SDK; MXE's
+// mingw-w64 ships no import library that carries them, so they are resolved at
+// runtime (see common/Windows/WinHostSys.cpp). Every caller goes through these
+// names instead - GS.cpp uses them as well as the memory mapping code.
+extern "C" {
+PVOID WINAPI pcsx2_VirtualAlloc2(HANDLE Process, PVOID BaseAddress, SIZE_T Size, ULONG AllocationType,
+	ULONG PageProtection, MEM_EXTENDED_PARAMETER* ExtendedParameters, ULONG ParameterCount);
+PVOID WINAPI pcsx2_MapViewOfFile3(HANDLE FileMapping, HANDLE Process, PVOID BaseAddress, ULONG64 Offset,
+	SIZE_T ViewSize, ULONG AllocationType, ULONG PageProtection, MEM_EXTENDED_PARAMETER* ExtendedParameters,
+	ULONG ParameterCount);
+BOOL WINAPI pcsx2_UnmapViewOfFile2(HANDLE Process, PVOID BaseAddress, ULONG UnmapFlags);
+}
+#define VirtualAlloc2 pcsx2_VirtualAlloc2
+#define MapViewOfFile3 pcsx2_MapViewOfFile3
+#define UnmapViewOfFile2 pcsx2_UnmapViewOfFile2
+#endif
+
 // NTDDI_VERSION above is enough to get VirtualAlloc2() and UnmapViewOfFile2()
 // declared, but mingw-w64's headers do not define these constants at all.
 // Values from the Windows SDK (winnt.h and synchapi.h).
