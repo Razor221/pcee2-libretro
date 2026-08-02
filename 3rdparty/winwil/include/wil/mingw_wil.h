@@ -166,6 +166,13 @@ public:
         }
     }
 
+    //! Frees whatever is held and takes ownership of value.
+    void reset(T value)
+    {
+        reset();
+        m_value = value;
+    }
+
     T get() const { return m_value; }
     T* put()
     {
@@ -194,11 +201,13 @@ namespace details
             CloseHandle(h);
     }
     inline void close_hkey(HKEY h) { RegCloseKey(h); }
+    inline void free_library(HMODULE h) { FreeLibrary(h); }
     inline void free_cotaskmem_string(PWSTR p) { CoTaskMemFree(p); }
 } // namespace details
 
 using unique_hfile = unique_any<HANDLE, decltype(&details::close_handle), details::close_handle>;
 using unique_hkey = unique_any<HKEY, decltype(&details::close_hkey), details::close_hkey>;
+using unique_hmodule = unique_any<HMODULE, decltype(&details::free_library), details::free_library>;
 using unique_cotaskmem_string =
     unique_any<PWSTR, decltype(&details::free_cotaskmem_string), details::free_cotaskmem_string>;
 
