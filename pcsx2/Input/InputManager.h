@@ -96,6 +96,17 @@ union InputBindingKey
 };
 static_assert(sizeof(InputBindingKey) == sizeof(u64), "Input binding key is 64 bits");
 
+/// Key identifying a device, with the remaining fields zeroed. Written out field
+/// by field because GCC (the MinGW cross toolchain builds with 11.3) rejects
+/// designated initialisers aimed at the anonymous struct inside the union.
+inline InputBindingKey MakeInputDeviceKey(InputSourceType source_type, u32 source_index)
+{
+	InputBindingKey key = {};
+	key.source_type = source_type;
+	key.source_index = source_index;
+	return key;
+}
+
 /// Hashability for InputBindingKey
 struct InputBindingKeyHash
 {

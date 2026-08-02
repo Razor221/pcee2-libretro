@@ -14,6 +14,7 @@
 #include <objbase.h>
 #include <oleauto.h>
 #include <winreg.h>
+#include <memory>
 #include <utility>
 
 namespace wil
@@ -38,7 +39,7 @@ public:
 
     com_ptr_nothrow& operator=(const com_ptr_nothrow& o)
     {
-        if (this != &o)
+        if (this != std::addressof(o))
         {
             reset();
             m_ptr = o.m_ptr;
@@ -49,7 +50,7 @@ public:
     }
     com_ptr_nothrow& operator=(com_ptr_nothrow&& o) noexcept
     {
-        if (this != &o)
+        if (this != std::addressof(o))
         {
             reset();
             m_ptr = o.m_ptr;
@@ -77,7 +78,12 @@ public:
         reset();
         return &m_ptr;
     }
-    T** operator&() { return put(); }
+    //! Same, for the IID_PPV-style APIs that take a void**.
+    void** put_void()
+    {
+        reset();
+        return reinterpret_cast<void**>(&m_ptr);
+    }
 
     T* release()
     {
@@ -179,7 +185,6 @@ public:
         reset();
         return &m_value;
     }
-    T* operator&() { return put(); }
     explicit operator bool() const { return m_value != T{}; }
 
     T release()
