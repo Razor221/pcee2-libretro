@@ -1242,6 +1242,13 @@ if(WIN32 AND NOT MSVC)
 		strmiids
 		opengl32
 		dwmapi
+		# MSVC pulls these in through the *.lib names above or OneCore.lib:
+		avrt      # AvSetMmThreadCharacteristics
+		dxgi      # CreateDXGIFactory1
+		version   # GetFileVersionInfo, VerQueryValue
+		winhttp
+		onecore   # VirtualAlloc2, MapViewOfFile3, UnmapViewOfFile2
+		${SHARPYUV_LIBRARY}
 	)
 elseif(WIN32)
 	target_link_libraries(PCSX2_FLAGS INTERFACE

@@ -22,7 +22,9 @@
 	((void)(_aligned_free(ptr), (ptr) = NULL))
 
 // aligned_malloc: Implement/declare linux equivalents here!
-#if !defined(_MSC_VER)
+// AlignedMalloc.cpp is only built off Windows; the msvcrt _aligned_* family is
+// there under MinGW as well, so both Windows compilers take the macro below.
+#if !defined(_WIN32)
 extern void* _aligned_malloc(size_t size, size_t align);
 extern void* pcsx2_aligned_realloc(void* handle, size_t new_size, size_t align, size_t old_size);
 extern void _aligned_free(void* pmem);

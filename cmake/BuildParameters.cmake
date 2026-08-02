@@ -146,6 +146,14 @@ endif()
 # Require C++20.
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(WIN32 AND NOT MSVC)
+	# -std=c++20 makes mingw-w64's headers emit their FORCEINLINE helpers
+	# (GetCurrentFiber, TpInitializeCallbackEnviron, the _Interlocked* family...)
+	# with __gnu_inline__ semantics, i.e. an external definition in every
+	# translation unit, and the link then drowns in thousands of "multiple
+	# definition" errors. -std=gnu++20 gives them C++ inline semantics.
+	set(CMAKE_CXX_EXTENSIONS ON)
+endif()
 
 if(MSVC AND NOT USE_CLANG_CL)
 	add_compile_options(
