@@ -163,14 +163,14 @@ if(WIN32 AND NOT MSVC)
 	# Set through the flags rather than add_compile_definitions() so that it is
 	# carried into every subdirectory and both languages - the 3rdparty C
 	# libraries (libzip, glad) hit the same problem.
-	# "static" is what actually settles it: plain __inline__ still leaves an
-	# external definition in the bundled C libraries (LZMA, libzip, glad), which
-	# is where the remaining duplicates came from. Internal linkage gives every
-	# translation unit its own copy, which is what these one-line Windows
-	# helpers want anyway. The escaped space keeps it a single -D argument.
-	string(APPEND CMAKE_C_FLAGS " -DFORCEINLINE=static\\ __inline__")
-	string(APPEND CMAKE_CXX_FLAGS " -DFORCEINLINE=static\\ __inline__")
-	message(STATUS "MinGW: FORCEINLINE=static __inline__, C++ extensions on")
+	# mingw declares these helpers extern before defining them, so in C the
+	# inline definition counts as an external one and lands in every object -
+	# hence the duplicates. static is rejected for the same reason ("declared
+	# extern and later static"), so the definitions are made weak instead and
+	# the linker keeps one. The escaped space keeps it a single -D argument.
+	string(APPEND CMAKE_C_FLAGS " -DFORCEINLINE=__inline__\\ __attribute__((__weak__))")
+	string(APPEND CMAKE_CXX_FLAGS " -DFORCEINLINE=__inline__\\ __attribute__((__weak__))")
+	message(STATUS "MinGW: FORCEINLINE=weak __inline__, C++ extensions on")
 endif()
 
 if(MSVC AND NOT USE_CLANG_CL)
