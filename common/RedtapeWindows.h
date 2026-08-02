@@ -28,6 +28,20 @@
 #endif
 #define NTDDI_VERSION 0x0A000005 // NTDDI_WIN10_RS4 (1803)
 
+#ifdef __MINGW32__
+// mingw's own headers declare their small helpers - GetCurrentFiber(),
+// NtCurrentTeb(), InterlockedExchangeSubtract(), the Tp* and SH* families - as
+// FORCEINLINE, which resolves to __forceinline, which Pcsx2Defs.h defines
+// without the inline keyword on purpose (that is what __forceinline_odr is
+// for). Every translation unit then emitted an external definition and the
+// link failed with thousands of "multiple definition" errors. Windows headers
+// get their own spelling back.
+#ifdef FORCEINLINE
+#undef FORCEINLINE
+#endif
+#define FORCEINLINE inline __attribute__((__always_inline__))
+#endif
+
 #include <windows.h>
 
 // NTDDI_VERSION above is enough to get VirtualAlloc2() and UnmapViewOfFile2()

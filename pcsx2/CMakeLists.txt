@@ -1247,7 +1247,6 @@ if(WIN32 AND NOT MSVC)
 		dxgi      # CreateDXGIFactory1
 		version   # GetFileVersionInfo, VerQueryValue
 		winhttp
-		onecore   # VirtualAlloc2, MapViewOfFile3, UnmapViewOfFile2
 		${SHARPYUV_LIBRARY}
 	)
 elseif(WIN32)

@@ -14,6 +14,53 @@
 
 #include <mutex>
 
+#ifdef __MINGW32__
+// VirtualAlloc2(), MapViewOfFile3() and UnmapViewOfFile2() are exported by
+// kernelbase.dll and reached through OneCore.lib in the Windows SDK; MXE's
+// mingw-w64 ships no import library that carries them, so they are resolved at
+// runtime instead. They exist on every Windows 10 1803 or newer, which is what
+// the emulator requires anyway.
+namespace
+{
+	template <typename T>
+	T LoadKernelBaseFunction(const char* name)
+	{
+		static const HMODULE kernelbase = GetModuleHandleW(L"kernelbase.dll");
+		return kernelbase ? reinterpret_cast<T>(GetProcAddress(kernelbase, name)) : nullptr;
+	}
+} // namespace
+
+static PVOID WINAPI VirtualAlloc2Shim(HANDLE Process, PVOID BaseAddress, SIZE_T Size, ULONG AllocationType,
+	ULONG PageProtection, MEM_EXTENDED_PARAMETER* ExtendedParameters, ULONG ParameterCount)
+{
+	using Fn = PVOID(WINAPI*)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*, ULONG);
+	static const Fn fn = LoadKernelBaseFunction<Fn>("VirtualAlloc2");
+	return fn ? fn(Process, BaseAddress, Size, AllocationType, PageProtection, ExtendedParameters, ParameterCount) : nullptr;
+}
+
+static PVOID WINAPI MapViewOfFile3Shim(HANDLE FileMapping, HANDLE Process, PVOID BaseAddress, ULONG64 Offset,
+	SIZE_T ViewSize, ULONG AllocationType, ULONG PageProtection, MEM_EXTENDED_PARAMETER* ExtendedParameters,
+	ULONG ParameterCount)
+{
+	using Fn = PVOID(WINAPI*)(HANDLE, HANDLE, PVOID, ULONG64, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*, ULONG);
+	static const Fn fn = LoadKernelBaseFunction<Fn>("MapViewOfFile3");
+	return fn ? fn(FileMapping, Process, BaseAddress, Offset, ViewSize, AllocationType, PageProtection,
+					   ExtendedParameters, ParameterCount) :
+				nullptr;
+}
+
+static BOOL WINAPI UnmapViewOfFile2Shim(HANDLE Process, PVOID BaseAddress, ULONG UnmapFlags)
+{
+	using Fn = BOOL(WINAPI*)(HANDLE, PVOID, ULONG);
+	static const Fn fn = LoadKernelBaseFunction<Fn>("UnmapViewOfFile2");
+	return fn ? fn(Process, BaseAddress, UnmapFlags) : FALSE;
+}
+
+#define VirtualAlloc2 VirtualAlloc2Shim
+#define MapViewOfFile3 MapViewOfFile3Shim
+#define UnmapViewOfFile2 UnmapViewOfFile2Shim
+#endif
+
 static DWORD ConvertToWinApi(const PageProtectionMode& mode)
 {
 	DWORD winmode = PAGE_NOACCESS;
