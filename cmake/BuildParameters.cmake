@@ -168,12 +168,18 @@ if(WIN32 AND NOT MSVC)
 	# hence the duplicates. static is rejected for the same reason ("declared
 	# extern and later static"), so the definitions are made weak instead and
 	# the linker keeps one. The escaped space keeps it a single -D argument.
-	# Carried in a force-included header rather than a -D: the definition needs
-	# parentheses, and those do not survive the shell when make expands the
-	# compile line.
-	string(APPEND CMAKE_C_FLAGS " -include ${CMAKE_SOURCE_DIR}/cmake/mingw_forceinline.h")
-	string(APPEND CMAKE_CXX_FLAGS " -include ${CMAKE_SOURCE_DIR}/cmake/mingw_forceinline.h")
-	message(STATUS "MinGW: force-including cmake/mingw_forceinline.h, C++ extensions on")
+	# mingw declares its one-line helpers - GetCurrentFiber(), NtCurrentTeb(),
+	# the Tp* and SH* families - extern and then defines them as FORCEINLINE,
+	# which lands on Pcsx2Defs.h's __forceinline; that macro leaves out the
+	# inline keyword deliberately, so in C the definition is an external one and
+	# every object carries a copy. Redefining FORCEINLINE does settle it, but
+	# neither storage class works: static conflicts with the extern declaration
+	# that precedes it, and weak is ignored for the same reason. The copies are
+	# identical by construction, so let the linker keep one.
+	string(APPEND CMAKE_EXE_LINKER_FLAGS " -Wl,--allow-multiple-definition")
+	string(APPEND CMAKE_SHARED_LINKER_FLAGS " -Wl,--allow-multiple-definition")
+	string(APPEND CMAKE_MODULE_LINKER_FLAGS " -Wl,--allow-multiple-definition")
+	message(STATUS "MinGW: --allow-multiple-definition, C++ extensions on")
 endif()
 
 if(MSVC AND NOT USE_CLANG_CL)
