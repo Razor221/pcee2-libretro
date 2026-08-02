@@ -84,6 +84,17 @@ public:
         reset();
         return reinterpret_cast<void**>(&m_ptr);
     }
+    //! As in WIL: &ptr hands out the slot, which is also what IID_PPV_ARGS
+    //! expects. Anything inside this header that needs the address of the
+    //! wrapper itself uses std::addressof for exactly this reason.
+    T** operator&() { return put(); }
+
+    T& operator*() const { return *m_ptr; }
+
+    friend bool operator==(const com_ptr_nothrow& p, std::nullptr_t) { return p.m_ptr == nullptr; }
+    friend bool operator==(std::nullptr_t, const com_ptr_nothrow& p) { return p.m_ptr == nullptr; }
+    friend bool operator!=(const com_ptr_nothrow& p, std::nullptr_t) { return p.m_ptr != nullptr; }
+    friend bool operator!=(std::nullptr_t, const com_ptr_nothrow& p) { return p.m_ptr != nullptr; }
 
     T* release()
     {

@@ -15,6 +15,14 @@
 #include <jpeglib.h>
 #include <wil/com.h>
 
+// mingw-w64's wingdi.h does not carry the DIB helpers from the Windows SDK.
+#ifndef DIBSIZE
+#define WIDTHBYTES(bits) ((((bits) + 31) / 32) * 4)
+#define DIBWIDTHBYTES(bi) (DWORD)WIDTHBYTES((DWORD)(bi).biWidth * (DWORD)(bi).biBitCount)
+#define _DIBSIZE(bi) (DIBWIDTHBYTES(bi) * (DWORD)(bi).biHeight)
+#define DIBSIZE(bi) ((bi).biHeight < 0 ? (-1) * (LONG)(_DIBSIZE(bi)) : (LONG)(_DIBSIZE(bi)))
+#endif
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmicrosoft-goto"
