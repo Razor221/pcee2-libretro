@@ -36,6 +36,17 @@ detect_compiler()
 #-------------------------------------------------------------------------------
 # Include specific module
 include(BuildParameters)
+
+# The libretro core is a plugin dropped into someone else's RetroArch install,
+# so it cannot assume the Visual C++ redistributable is present - a missing
+# MSVCP140.dll/VCRUNTIME140_1.dll makes LoadLibrary fail with "The specified
+# module could not be found" and RetroArch just reports a broken core. Link the
+# CRT statically instead. Has to be set before any target is created, and the
+# prebuilt dependencies have to match (see scripts/build-deps-windows.bat).
+if(MSVC AND ENABLE_LIBRETRO)
+	set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 include(SearchForStuff)
 
 # Must be done after SearchForStuff

@@ -437,7 +437,8 @@ jobs:
             echo PCEE2 libretro core - Windows installation
             echo ============================================
             echo Copy pcee2_libretro.dll and pcee2_libretro.info into your RetroArch "cores" directory.
-            echo Requires the Microsoft Visual C++ 2015-2022 Redistributable x64.
+            echo No runtime to install - the CRT and all dependencies are linked statically.
+            echo Windows 10 1803 x64 or newer is required.
           ) > artifact\README.txt
 
       - name: Upload Artifact
