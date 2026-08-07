@@ -124,6 +124,20 @@ if [ "${PCEE2_BUILD_PNG_ZSTD:-0}" = "1" ]; then
 	"$CMAKE" --install zstd/b
 fi
 
+# Ubuntu's libjpeg-turbo8-dev gives an SONAME of libjpeg.so.8, which only exists
+# on Ubuntu and the Arch-family distros; Debian ships libjpeg62-turbo, i.e.
+# libjpeg.so.62, and the core then fails to load outright. Build libjpeg-turbo
+# static into the prefix so it ends up inside the core and no SONAME is baked in
+# at all. Set PCEE2_BUILD_JPEG=1 to enable.
+if [ "${PCEE2_BUILD_JPEG:-0}" = "1" ]; then
+	clone https://github.com/libjpeg-turbo/libjpeg-turbo libjpeg-turbo 3.1.3
+	"$CMAKE" -S libjpeg-turbo -B libjpeg-turbo/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+		-DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_TURBOJPEG=OFF
+	"$CMAKE" --build libjpeg-turbo/build --parallel "$NPROCS"
+	"$CMAKE" --install libjpeg-turbo/build
+fi
+
 # Windows (MinGW) only: the libretro MXE image lacks the system libraries that
 # the Linux jobs get from Ubuntu apt. ZLIB and PNG were assumed to come from MXE,
 # but the cross-build's CMake configure fails with "Could NOT find ZLIB" and

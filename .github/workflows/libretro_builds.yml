@@ -38,10 +38,13 @@ jobs:
         uses: actions/cache@v6
         with:
           path: deps
-          key: linux-libretro-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
+          key: linux-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
+        env:
+          PCEE2_SDL_STATIC: "1"
+          PCEE2_BUILD_JPEG: "1"
         run: bash pcee2-libretro/scripts/build-deps-linux.sh "$PWD/deps"
 
       - name: Generate CMake
@@ -57,6 +60,15 @@ jobs:
 
       - name: Build Core
         run: cmake --build build --target pcee2_libretro
+
+      - name: Verify self-contained (no libSDL3 / libjpeg NEEDED)
+        run: |
+          if readelf -d build/bin/pcee2_libretro.so | grep -qE 'libSDL3|libjpeg'; then
+            echo "ERROR: core still links SDL3 or libjpeg dynamically:"
+            readelf -d build/bin/pcee2_libretro.so | grep NEEDED
+            exit 1
+          fi
+          echo "OK: SDL3 and libjpeg are statically linked."
 
       - name: Prepare Artifact
         run: |
