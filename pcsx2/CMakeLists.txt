@@ -749,6 +749,15 @@ else()
 	)
 endif()
 
+if(NOT WIN32)
+	list(APPEND pcsx2DEV9Sources
+		DEV9/Unix/pcap_io_unix.cpp
+	)
+	list(APPEND pcsx2DEV9Headers
+		DEV9/Unix/pcap_io_unix_funcs.h
+	)
+endif()
+
 # IPU sources
 set(pcsx2IPUSources
 	IPU/IPU.cpp
@@ -1273,8 +1282,10 @@ elseif(WIN32)
 		OneCore.lib
 	)
 else()
-	target_link_libraries(PCSX2_FLAGS INTERFACE
-		PCAP::PCAP
+	# Headers only - libpcap is dlopen()ed at runtime (DEV9/Unix/pcap_io_unix.cpp)
+	# so the core does not carry a DT_NEEDED on a distro-specific SONAME.
+	target_include_directories(PCSX2_FLAGS INTERFACE
+		${PCAP_INCLUDE_DIR}
 	)
 endif()
 

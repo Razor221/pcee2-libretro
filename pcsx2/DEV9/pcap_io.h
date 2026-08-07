@@ -6,10 +6,10 @@
 #include "net.h"
 #include "PacketReader/MAC_Address.h"
 
-#ifdef _WIN32
+// libpcap is loaded at runtime on every platform, see Win32/pcap_io_win32.cpp
+// and Unix/pcap_io_unix.cpp.
 bool load_pcap();
 void unload_pcap();
-#endif
 
 class PCAPAdapter : public NetAdapter
 {

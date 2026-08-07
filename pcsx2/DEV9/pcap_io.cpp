@@ -37,10 +37,8 @@ PCAPAdapter::PCAPAdapter()
 {
 	if (!EmuConfig.DEV9.EthEnable)
 		return;
-#ifdef _WIN32
 	if (!load_pcap())
 		return;
-#endif
 
 #ifdef _WIN32
 	std::string pcapAdapter = PCAPPREFIX + EmuConfig.DEV9.EthDevice;
@@ -213,10 +211,8 @@ std::vector<AdapterEntry> PCAPAdapter::GetAdapters()
 {
 	std::vector<AdapterEntry> nic;
 
-#ifdef _WIN32
 	if (!load_pcap())
 		return nic;
-#endif
 
 	char errbuf[PCAP_ERRBUF_SIZE];
 	pcap_if_t* alldevs;
