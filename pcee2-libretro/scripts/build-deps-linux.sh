@@ -129,7 +129,9 @@ fi
 # libjpeg.so.62, and the core then fails to load outright. Build libjpeg-turbo
 # static into the prefix so it ends up inside the core and no SONAME is baked in
 # at all. Set PCEE2_BUILD_JPEG=1 to enable.
-if [ "${PCEE2_BUILD_JPEG:-0}" = "1" ]; then
+#The Windows cross build gets its libjpeg-turbo from the HOST block below, which
+#has to build one regardless because MXE ships none, so skip this one there.
+if [ "${PCEE2_BUILD_JPEG:-0}" = "1" ] && [ -z "$HOST" ]; then
 	clone https://github.com/libjpeg-turbo/libjpeg-turbo libjpeg-turbo 3.1.3
 	"$CMAKE" -S libjpeg-turbo -B libjpeg-turbo/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \

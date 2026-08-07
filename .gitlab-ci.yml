@@ -84,8 +84,13 @@ include:
 
 # Build the dependency tree (shaderc, ...) before configuring the core.
 # Runs in the libretro build image; mirrors the GitHub Actions deps step.
+# SDL3 and libjpeg go inside the core rather than being linked against. SDL3 is
+# too new to be packaged by most distributions, and the libjpeg SONAME differs
+# between them - Ubuntu, where this builds, has libjpeg.so.8, while Debian ships
+# libjpeg.so.62 - so either one turns into a core the frontend cannot load at
+# all on the wrong machine.
 .pcee2-deps-linux: &pcee2-deps-linux
-  - bash pcee2-libretro/scripts/build-deps-linux.sh "$CI_PROJECT_DIR/deps"
+  - PCEE2_SDL_STATIC=1 PCEE2_BUILD_JPEG=1 bash pcee2-libretro/scripts/build-deps-linux.sh "$CI_PROJECT_DIR/deps"
 
 stages:
   - build-prepare
@@ -140,6 +145,7 @@ libretro-build-windows-x64:
     - |
       if [ ! -f "$CI_PROJECT_DIR/deps/lib/libshaderc_combined.a" ]; then
         CMAKE=x86_64-w64-mingw32.static-cmake HOST=x86_64-w64-mingw32.static \
+        PCEE2_SDL_STATIC=1 \
           ./pcee2-libretro/scripts/build-deps-linux.sh "$CI_PROJECT_DIR/deps"
       fi
   # Building ~15 static libraries from source on every pipeline is wasteful; key
