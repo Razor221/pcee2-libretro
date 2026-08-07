@@ -44,6 +44,10 @@ include(BuildParameters)
 # CRT statically instead. Has to be set before any target is created, and the
 # prebuilt dependencies have to match (see scripts/build-deps-windows.bat).
 if(MSVC AND ENABLE_LIBRETRO)
+	# CMAKE_MSVC_RUNTIME_LIBRARY is only honoured under CMP0091 NEW, and a
+	# bundled library asking for an older CMake would otherwise reset that
+	# policy for its own subdirectory and quietly stay on /MD.
+	set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
 	set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 

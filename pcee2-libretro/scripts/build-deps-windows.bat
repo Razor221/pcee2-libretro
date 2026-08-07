@@ -28,7 +28,12 @@ set SHADERC=v2026.2
 rem The core links the CRT statically so it loads without the VC++
 rem redistributable installed, so every dependency has to use /MT as well -
 rem mixing runtimes in one binary is a link error at best.
-set "COMMON=-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=%INSTALLDIR% -DCMAKE_PREFIX_PATH=%INSTALLDIR% -DBUILD_SHARED_LIBS=OFF -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -G Ninja"
+rem
+rem CMAKE_MSVC_RUNTIME_LIBRARY only takes effect under CMP0091 NEW, and
+rem CMAKE_POLICY_VERSION_MINIMUM below pins the policy floor at 3.5 for the
+rem projects that ask for an ancient CMake (rapidyaml is one), which puts that
+rem policy back to OLD and silently leaves them on /MD. Set the policy itself.
+set "COMMON=-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=%INSTALLDIR% -DCMAKE_PREFIX_PATH=%INSTALLDIR% -DBUILD_SHARED_LIBS=OFF -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -G Ninja"
 
 mkdir deps-build 2>nul
 cd deps-build || exit /b 1
@@ -110,7 +115,7 @@ cd ..
 rem SPIRV-Tools and glslang generate sources with Python scripts of their own, so
 rem hand them the interpreter we resolved instead of letting find_package() guess
 rem (PYTHON_EXECUTABLE covers the older FindPythonInterp path they still use).
-cmake -S shaderc -B shaderc\b -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=%INSTALLDIR% -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -G Ninja -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DSHADERC_SKIP_COPYRIGHT_CHECK=ON -DSHADERC_ENABLE_SHARED_CRT=OFF "-DPython3_EXECUTABLE=%PYTHON%" "-DPYTHON_EXECUTABLE=%PYTHON%" || exit /b 1
+cmake -S shaderc -B shaderc\b -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=%INSTALLDIR% -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -G Ninja -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DSHADERC_SKIP_COPYRIGHT_CHECK=ON -DSHADERC_ENABLE_SHARED_CRT=OFF "-DPython3_EXECUTABLE=%PYTHON%" "-DPYTHON_EXECUTABLE=%PYTHON%" || exit /b 1
 cmake --build shaderc\b --target shaderc_combined || exit /b 1
 copy /y shaderc\b\libshaderc\shaderc_combined.lib "%INSTALLDIR%\lib\shaderc_combined.lib" || exit /b 1
 xcopy /e /i /y shaderc\libshaderc\include\shaderc "%INSTALLDIR%\include\shaderc" || exit /b 1
