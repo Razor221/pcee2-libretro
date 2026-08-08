@@ -88,9 +88,27 @@ clone https://github.com/ianlancetaylor/libbacktrace libbacktrace master
 # shaderc: static combined, linked straight into the core. Distro
 # libshaderc_combined.a packages aren't actually self-contained (Ubuntu's
 # expects the system glslang), so build the real thing from source.
-SHADERC=v2026.2
+SHADERC=v2026.3
+# glslang newer than the revision shaderc's DEPS pins. Between that revision and
+# this one glslang fixed a run of preprocessor memory-safety bugs (16-31 July
+# 2026), including 2eb8a581 "guard elseSeen/ifdepth against negative
+# elsetracker": once the preprocessor loses track of a conditional block it
+# writes backwards out of elseSeen into the allocation behind it and takes the
+# process down inside TShader::parse. That is what a Vulkan build of the core
+# hits on x86_64 while parsing GS/Renderers/Common's convert.glsl - all those
+# long "#elif !defined(...) && ..." chains - reported either as shaderc's
+# internal_error (the exception it catches) or as an outright SIGSEGV, so the
+# renderer never comes up and the user gets a black screen. aarch64 happens to
+# survive the same corruption, which is why this took a while to place.
+GLSLANG=90afccfbd49dff0349d86a41762e9de24e1df811
 clone https://github.com/google/shaderc shaderc "$SHADERC"
 (cd shaderc && python3 utils/git-sync-deps)
+# git-sync-deps has just put DEPS' revision in place; move it forward. Fetching
+# the bare commit keeps this pinned rather than tracking whatever main is today.
+if [ "$(git -C shaderc/third_party/glslang rev-parse HEAD)" != "$GLSLANG" ]; then
+	git -C shaderc/third_party/glslang fetch --depth 1 origin "$GLSLANG"
+	git -C shaderc/third_party/glslang checkout --detach FETCH_HEAD
+fi
 "$CMAKE" -S shaderc -B shaderc/b -G Ninja -DCMAKE_BUILD_TYPE=Release \
 	-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
 	-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
