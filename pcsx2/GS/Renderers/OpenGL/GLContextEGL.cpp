@@ -129,7 +129,12 @@ EGLDisplay GLContextEGL::GetPlatformDisplay(Error* error)
 {
 	EGLDisplay dpy = TryGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA, "EGL_MESA_platform_surfaceless");
 	if (dpy == EGL_NO_DISPLAY)
+	{
+		// Worth an error rather than a warning: every later failure follows from
+		// here, and a log that does not say which display was used cannot be read.
+		Console.Error("EGL_MESA_platform_surfaceless is unavailable, falling back to the default display.");
 		dpy = GetFallbackDisplay(error);
+	}
 
 	return dpy;
 }
@@ -300,7 +305,26 @@ bool GLContextEGL::MakeCurrent()
 {
 	if (!eglMakeCurrent(m_display, m_surface, m_surface, m_context))
 	{
-		Console.ErrorFmt("eglMakeCurrent() failed: 0x{:x}", eglGetError());
+		const EGLint err = eglGetError();
+		Console.ErrorFmt("eglMakeCurrent() failed: 0x{:x}", err);
+
+		// The libretro core always asks for a surfaceless window, so this is the
+		// path every GL build takes there, and it needs a driver that can make a
+		// context current without a surface. Say so, because the error code on its
+		// own is not enough to work that out - a driver that never got as far as
+		// creating anything reports EGL_SUCCESS here.
+		if (m_surface == EGL_NO_SURFACE)
+		{
+			const char* extensions_str = eglQueryString(m_display, EGL_EXTENSIONS);
+			const bool surfaceless_context =
+				extensions_str && std::strstr(extensions_str, "EGL_KHR_surfaceless_context");
+			Console.ErrorFmt("  No surface: this needs a surfaceless context, which this driver "
+							 "{} advertise (EGL_KHR_surfaceless_context).",
+				surfaceless_context ? "does" : "does not");
+			Console.Error("  EGL_MESA_platform_surfaceless is a Mesa extension; on other drivers "
+						  "use the Vulkan or software renderer instead.");
+		}
+
 		return false;
 	}
 
