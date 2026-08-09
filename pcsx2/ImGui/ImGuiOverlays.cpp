@@ -1355,8 +1355,14 @@ __ri void ImGuiManager::DrawIndicatorsOverlay(float& position_y, float scale, fl
 		{
 			// Draw Speed indicator
 			const float target_speed = VMManager::GetTargetSpeed();
-			const bool is_normal_speed = (target_speed == EmuConfig.EmulationSpeed.NominalScalar ||
-										  VMManager::IsTargetSpeedAdjustedToHost());
+			bool is_normal_speed = (target_speed == EmuConfig.EmulationSpeed.NominalScalar ||
+									VMManager::IsTargetSpeedAdjustedToHost());
+#ifdef PCSX2_LIBRETRO
+			// The frontend paces the core, so the limiter is left unlimited and the
+			// emulator is not running fast - that is the normal state here, and the
+			// indicator would sit on screen permanently saying otherwise.
+			is_normal_speed = is_normal_speed || (VMManager::GetLimiterMode() == LimiterModeType::Unlimited);
+#endif
 			if (!is_normal_speed)
 			{
 				if (target_speed == EmuConfig.EmulationSpeed.SlomoScalar) // Slow-Motion

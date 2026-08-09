@@ -1141,7 +1141,7 @@ if(ENABLE_LIBRETRO)
 		COMMENT "Embedding resources"
 		VERBATIM)
 	list(APPEND pcsx2GSSources "${pcsx2GSShaderResources}" "${CMAKE_SOURCE_DIR}/pcsx2/EmbeddedResources.cpp")
-	target_compile_definitions(PCSX2_FLAGS INTERFACE PCSX2_EMBEDDED_RESOURCES)
+	target_compile_definitions(PCSX2_FLAGS INTERFACE PCSX2_EMBEDDED_RESOURCES PCSX2_LIBRETRO)
 endif()
 
 # These ones benefit a lot from LTO
