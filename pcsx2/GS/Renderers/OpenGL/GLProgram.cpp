@@ -246,6 +246,20 @@ bool GLProgram::Link()
 		else
 		{
 			Console.Error("Program failed to link:\n%s", info_log.c_str());
+
+			// Same story as the Vulkan shader cache: the GLSL is read from the
+			// resources directory at runtime, and a directory left over from an
+			// older build is the usual reason a shader suddenly lacks the entry
+			// point the renderer asks for. Once is enough for a whole batch.
+			static bool resources_hint_logged = false;
+			if (!resources_hint_logged)
+			{
+				resources_hint_logged = true;
+				Console.ErrorFmt("These shaders come from '{}'. If that directory was copied from a "
+								 "different version of the emulator, replace it with a matching one.",
+					EmuFolders::Resources);
+			}
+
 			glDeleteProgram(m_program_id);
 			m_program_id = 0;
 			return false;

@@ -291,6 +291,22 @@ std::optional<VKShaderCache::SPIRVCodeVector> VKShaderCache::CompileShaderToSPV(
 		const std::string_view errors(result ? dyn_shaderc::shaderc_result_get_error_message(result)
 		                                     : "null result object");
 		ERROR_LOG("Failed to compile shader to SPIR-V: {}\n{}", compilation_status_to_string(status), errors);
+
+		// Shaders are read from the resources directory at runtime, and the
+		// artifacts people install ship the core alone, so the usual cause of a
+		// shader that will not compile is a resources directory left over from an
+		// older build - the renderer asking for an entry point the GLSL on disk
+		// does not have. That reads like a compiler fault otherwise, so say it
+		// once, rather than for every pipeline in the batch.
+		static bool resources_hint_logged = false;
+		if (!resources_hint_logged)
+		{
+			resources_hint_logged = true;
+			ERROR_LOG("These shaders come from '{}'. If that directory was copied from a different "
+					  "version of the emulator, replace it with a matching one.",
+				EmuFolders::Resources);
+		}
+
 		DumpBadShader(source, errors);
 	}
 	else
