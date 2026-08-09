@@ -1120,6 +1120,25 @@ set(pcsx2arm64Headers
 	arm64/aVU_Compile.inl
 )
 
+# The libretro core ships as a single file, so the shaders it needs at runtime
+# have to be in it rather than in a resources directory the user assembles by
+# hand - see cmake/EmbedShaders.cmake. Regenerated whenever a shader changes.
+if(ENABLE_LIBRETRO)
+	set(pcsx2GSShaderResources "${CMAKE_CURRENT_BINARY_DIR}/GSShaderResources.cpp")
+	file(GLOB_RECURSE pcsx2ShaderFiles "${CMAKE_SOURCE_DIR}/bin/resources/shaders/*")
+	add_custom_command(
+		OUTPUT "${pcsx2GSShaderResources}"
+		COMMAND ${CMAKE_COMMAND}
+			-DRESOURCES_DIR=${CMAKE_SOURCE_DIR}/bin/resources
+			-DOUTPUT_CPP=${pcsx2GSShaderResources}
+			-P ${CMAKE_SOURCE_DIR}/cmake/EmbedShaders.cmake
+		DEPENDS ${pcsx2ShaderFiles} ${CMAKE_SOURCE_DIR}/cmake/EmbedShaders.cmake
+		COMMENT "Embedding GS shaders"
+		VERBATIM)
+	list(APPEND pcsx2GSSources "${pcsx2GSShaderResources}")
+	target_compile_definitions(PCSX2_FLAGS INTERFACE PCSX2_EMBEDDED_SHADERS)
+endif()
+
 # These ones benefit a lot from LTO
 set(pcsx2LTOSources
 	${pcsx2Sources}
