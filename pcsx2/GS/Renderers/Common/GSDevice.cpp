@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
-#include "GS/GSShaderResources.h"
+#include "EmbeddedResources.h"
 
 #include <cstdlib>
 #include "GS/Renderers/Common/GSDevice.h"
@@ -371,16 +371,14 @@ GSVector4i GSDevice::ProcessCopyArea(const GSVector4i& rtsize, const GSVector4i&
 
 std::optional<std::string> GSDevice::ReadShaderSource(const char* filename)
 {
-#ifdef PCSX2_EMBEDDED_SHADERS
+#ifdef PCSX2_EMBEDDED_RESOURCES
 	// The built-in copy wins. A resources directory put together by hand can come
 	// from a different build, and a shader that does not match the code fails to
 	// compile with an error that looks like a driver fault - which is exactly the
-	// bug report this came from. Set PCEE2_EXTERNAL_SHADERS to work on the files
-	// on disk instead.
-	static const bool prefer_files = (std::getenv("PCEE2_EXTERNAL_SHADERS") != nullptr);
-	if (!prefer_files)
+	// bug report this came from.
+	if (EmbeddedResourcesPreferred())
 	{
-		if (const std::optional<std::string_view> embedded = GSGetEmbeddedShader(filename))
+		if (const std::optional<std::string_view> embedded = GetEmbeddedResource(filename))
 			return std::string(embedded.value());
 	}
 #endif

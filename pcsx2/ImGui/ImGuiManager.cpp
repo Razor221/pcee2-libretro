@@ -9,6 +9,7 @@
 #include "IconsFontAwesome.h"
 #include "ImGui/FullscreenUI.h"
 #include "ImGui/ImGuiFullscreen.h"
+#include "EmbeddedResources.h"
 #include "ImGui/ImGuiManager.h"
 #include "ImGui/ImGuiOverlays.h"
 #include "Input/InputManager.h"
@@ -465,6 +466,31 @@ void ImGuiManager::SetKeyMap()
 	}
 }
 
+
+#ifdef PCSX2_EMBEDDED_RESOURCES
+// The three fonts below are fatal when missing, and the libretro core ships as a
+// single file - so a user with a resources directory from another build, or none
+// at all, cannot start. Prefer the copies built into the binary.
+static std::optional<std::vector<u8>> ReadRequiredFont(const char* name)
+{
+	if (EmbeddedResourcesPreferred())
+	{
+		// Keys are always slash separated, whatever the host uses.
+		if (const std::optional<std::string_view> data = GetEmbeddedResource(fmt::format("fonts/{}", name)))
+			return std::vector<u8>(data->begin(), data->end());
+	}
+
+	return FileSystem::ReadBinaryFile(
+		EmuFolders::GetOverridableResourcePath(fmt::format("fonts" FS_OSPATH_SEPARATOR_STR "{}", name)).c_str());
+}
+#else
+static std::optional<std::vector<u8>> ReadRequiredFont(const char* name)
+{
+	return FileSystem::ReadBinaryFile(
+		EmuFolders::GetOverridableResourcePath(fmt::format("fonts" FS_OSPATH_SEPARATOR_STR "{}", name)).c_str());
+}
+#endif
+
 bool ImGuiManager::LoadFontData()
 {
 	const std::string custom_font_path(StringUtil::StripWhitespace(GSConfig.OsdFontPath));
@@ -489,8 +515,7 @@ bool ImGuiManager::LoadFontData()
 
 	if (s_fixed_font_data.empty())
 	{
-		std::optional<std::vector<u8>> font_data = FileSystem::ReadBinaryFile(
-			EmuFolders::GetOverridableResourcePath("fonts" FS_OSPATH_SEPARATOR_STR "RobotoMono-Medium.ttf").c_str());
+		std::optional<std::vector<u8>> font_data = ReadRequiredFont("RobotoMono-Medium.ttf");
 		if (!font_data.has_value())
 			return false;
 
@@ -500,7 +525,7 @@ bool ImGuiManager::LoadFontData()
 	if (s_icon_fa_font_data.empty())
 	{
 		std::optional<std::vector<u8>> font_data =
-			FileSystem::ReadBinaryFile(EmuFolders::GetOverridableResourcePath("fonts" FS_OSPATH_SEPARATOR_STR "fa-solid-900.ttf").c_str());
+			ReadRequiredFont("fa-solid-900.ttf");
 		if (!font_data.has_value())
 			return false;
 
@@ -510,7 +535,7 @@ bool ImGuiManager::LoadFontData()
 	if (s_icon_pf_font_data.empty())
 	{
 		std::optional<std::vector<u8>> font_data =
-			FileSystem::ReadBinaryFile(EmuFolders::GetOverridableResourcePath("fonts" FS_OSPATH_SEPARATOR_STR "promptfont.otf").c_str());
+			ReadRequiredFont("promptfont.otf");
 		if (!font_data.has_value())
 			return false;
 

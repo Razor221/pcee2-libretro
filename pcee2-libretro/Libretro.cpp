@@ -41,6 +41,7 @@
 #include "common/StringUtil.h"
 #include "common/WindowInfo.h"
 
+#include "EmbeddedResources.h"
 #include "pcsx2/Achievements.h"
 #include "pcsx2/Config.h"
 #include "pcsx2/GS.h"
@@ -320,10 +321,13 @@ bool LibretroHost::InitializeConfig()
 
 	if (!FileSystem::DirectoryExists(EmuFolders::Resources.c_str()))
 	{
-		Console.ErrorFmt("PCSX2 resources directory not found at '{}'. Copy the 'resources' directory from a "
-						 "PCSX2 installation there.",
+		// Not fatal any more: the shaders and fonts the core cannot start without
+		// are built into it. What is left in that directory - the game database,
+		// the patches - only costs the feature that wants it.
+		Console.WarningFmt("No resources directory at '{}'. The core will run, but the game database and "
+						   "patches will be unavailable; copy the 'resources' directory from a matching "
+						   "PCSX2 build there to get them.",
 			EmuFolders::Resources);
-		return false;
 	}
 
 	const char* error;
@@ -334,13 +338,28 @@ bool LibretroHost::InitializeConfig()
 	}
 
 	{
-		const std::string roboto_path =
-			EmuFolders::GetOverridableResourcePath("fonts" FS_OSPATH_SEPARATOR_STR "Roboto-Regular.ttf");
-		const auto roboto_data = FileSystem::MapBinaryFileForRead(roboto_path.c_str());
+		// ImGui keeps the span, so whatever backs it has to outlive this scope:
+		// the mapping stays for the process, and the embedded copy is static data.
+		std::span<const u8> roboto_data;
+
+#ifdef PCSX2_EMBEDDED_RESOURCES
+		if (EmbeddedResourcesPreferred())
+		{
+			if (const std::optional<std::string_view> embedded = GetEmbeddedResource("fonts/Roboto-Regular.ttf"))
+				roboto_data = std::span<const u8>(reinterpret_cast<const u8*>(embedded->data()), embedded->size());
+		}
+#endif
+
 		if (roboto_data.empty())
 		{
-			Console.ErrorFmt("Failed to load font file '{}'.", roboto_path);
-			return false;
+			const std::string roboto_path =
+				EmuFolders::GetOverridableResourcePath("fonts" FS_OSPATH_SEPARATOR_STR "Roboto-Regular.ttf");
+			roboto_data = FileSystem::MapBinaryFileForRead(roboto_path.c_str());
+			if (roboto_data.empty())
+			{
+				Console.ErrorFmt("Failed to load font file '{}'.", roboto_path);
+				return false;
+			}
 		}
 
 		std::vector<ImGuiManager::FontInfo> fonts;
