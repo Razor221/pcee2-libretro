@@ -3346,6 +3346,10 @@ void VMManager::WarnAboutUnsafeSettings()
 			append(ICON_FA_TV,
 				TRANSLATE_SV("VMManager", "Integer scaling is enabled. This may shrink the image."));
 		}
+#ifndef __LIBRETRO__
+		// The libretro core always pins the graphics API explicitly, because it has to match the
+		// hardware render context negotiated with the frontend - there is no "Automatic" to pick.
+		// Warning about it would fire on every boot without anything the user could do about it.
 		static bool render_change_warn = false;
 		if (EmuConfig.GS.Renderer != GSRendererType::Auto && EmuConfig.GS.Renderer != GSRendererType::SW && !render_change_warn)
 		{
@@ -3355,6 +3359,7 @@ void VMManager::WarnAboutUnsafeSettings()
 			append(ICON_FA_CIRCLE_EXCLAMATION,
 				TRANSLATE_SV("VMManager", "Graphics API is not set to Automatic. This may cause performance problems and graphical issues."));
 		}
+#endif
 	}
 	if (EmuConfig.GS.DumpGSData)
 	{
