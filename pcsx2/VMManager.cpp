@@ -3346,7 +3346,7 @@ void VMManager::WarnAboutUnsafeSettings()
 			append(ICON_FA_TV,
 				TRANSLATE_SV("VMManager", "Integer scaling is enabled. This may shrink the image."));
 		}
-#ifndef __LIBRETRO__
+#ifndef PCSX2_LIBRETRO
 		// The libretro core always pins the graphics API explicitly, because it has to match the
 		// hardware render context negotiated with the frontend - there is no "Automatic" to pick.
 		// Warning about it would fire on every boot without anything the user could do about it.
