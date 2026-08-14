@@ -3,7 +3,9 @@
 
 #include "CDVD/CDVDdiscReader.h"
 
+#ifndef __ANDROID__
 #include <libudev.h>
+#endif
 #include <linux/cdrom.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -11,6 +13,11 @@
 
 std::vector<std::string> GetOpticalDriveList()
 {
+#ifdef __ANDROID__
+	// No udev, and nothing for it to enumerate: physical discs are not a thing
+	// the emulator can reach on a phone.
+	return {};
+#else
 	udev* udev_context = udev_new();
 	if (!udev_context)
 		return {};
@@ -39,6 +46,7 @@ std::vector<std::string> GetOpticalDriveList()
 	udev_unref(udev_context);
 
 	return drives;
+#endif
 }
 
 void GetValidDrive(std::string& drive)
