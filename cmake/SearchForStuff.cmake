@@ -59,6 +59,20 @@ if (WIN32)
 	add_subdirectory(3rdparty/winwil EXCLUDE_FROM_ALL)
 	set(FFMPEG_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/3rdparty/ffmpeg/include")
 	find_package(Vtune)
+elseif(ANDROID)
+	# Everything above comes from the prefix built by
+	# pcee2-libretro/scripts/build-deps-android.sh. What is missing here is
+	# missing from the platform: no libcurl (the downloader is compiled out),
+	# no libpcap (DEV9's network adapters use the headers in-tree and load the
+	# library at runtime, which no Android device has), no fontconfig, X11,
+	# Wayland, dbus or udev, and no VTune.
+	#
+	# FFmpeg is loaded at runtime everywhere but Windows, so only its headers
+	# are needed to build; use the bundled ones.
+	set(FFMPEG_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/3rdparty/ffmpeg/include")
+	# DEV9 dlopen()s libpcap, so its headers are all that has to be present -
+	# the deps prefix carries a copy of them.
+	find_path(PCAP_INCLUDE_DIR NAMES pcap.h REQUIRED)
 else()
 	find_package(CURL REQUIRED)
 	find_package(PCAP REQUIRED)

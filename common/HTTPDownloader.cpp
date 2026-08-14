@@ -15,6 +15,17 @@ static constexpr u32 DEFAULT_MAX_ACTIVE_REQUESTS = 4;
 const char HTTPDownloader::DEFAULT_USER_AGENT[] =
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:85.0) Gecko/20100101 Firefox/85.0";
 
+#ifdef __ANDROID__
+// There is no libcurl on Android and neither backend is compiled in there, so
+// this is the whole implementation: every caller already treats a missing
+// downloader as "this feature is unavailable" (achievements and cover art),
+// and in a libretro core both of those belong to the frontend anyway.
+std::unique_ptr<HTTPDownloader> HTTPDownloader::Create(std::string user_agent)
+{
+	return {};
+}
+#endif
+
 HTTPDownloader::HTTPDownloader()
 	: m_timeout(DEFAULT_TIMEOUT_IN_SECONDS)
 	, m_max_active_requests(DEFAULT_MAX_ACTIVE_REQUESTS)

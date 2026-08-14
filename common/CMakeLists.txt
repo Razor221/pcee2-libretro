@@ -169,15 +169,21 @@ else()
 		Linux/LnxThreads.cpp
 		Linux/LnxMisc.cpp
 	)
-	target_include_directories(common PRIVATE
-		${DBUS_INCLUDE_DIRS}
-	)
-	target_link_libraries(common PRIVATE
-		${DBUS_LINK_LIBRARIES}
-		X11::X11
-		X11::Xrandr
-		X11::Xi
-	)
+	# Android is close enough to Linux for the sources above, but has none of
+	# the desktop session pieces below it.
+	if(NOT ANDROID)
+		target_include_directories(common PRIVATE
+			${DBUS_INCLUDE_DIRS}
+		)
+		target_link_libraries(common PRIVATE
+			${DBUS_LINK_LIBRARIES}
+			X11::X11
+			X11::Xrandr
+			X11::Xi
+		)
+	else()
+		target_link_libraries(common PRIVATE log)
+	endif()
 	if(USE_BACKTRACE)
 		target_compile_definitions(common PRIVATE "HAS_LIBBACKTRACE=1")
 		target_link_libraries(common PRIVATE libbacktrace::libbacktrace)
@@ -195,8 +201,11 @@ if (USE_GCC AND CMAKE_INTERPROCEDURAL_OPTIMIZATION)
 	set_source_files_properties(FastJmp.cpp PROPERTIES COMPILE_FLAGS -fno-lto)
 endif()
 
-if(NOT WIN32)
-	# libcurl-based HTTPDownloader
+if(NOT WIN32 AND NOT ANDROID)
+	# libcurl-based HTTPDownloader. Android has no libcurl to link against, and
+	# a libretro core has nothing to download - HTTPDownloader::Create() there
+	# returns nothing and the callers (achievements, cover downloads) treat it
+	# as unavailable.
 	target_sources(common PRIVATE
 		HTTPDownloaderCurl.cpp
 		HTTPDownloaderCurl.h

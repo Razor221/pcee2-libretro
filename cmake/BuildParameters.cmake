@@ -28,7 +28,16 @@ option(USE_VULKAN "Enable Vulkan GS renderer" ON)
 #-------------------------------------------------------------------------------
 # Path and lib option
 #-------------------------------------------------------------------------------
-if(UNIX AND NOT APPLE)
+if(ANDROID)
+	# None of the desktop display or diagnostic stacks exist here. The core
+	# renders through the frontend's Vulkan context, so the GL renderer - which
+	# would want an EGL surface of its own - is off as well.
+	set(ENABLE_SETCAP OFF)
+	set(X11_API OFF)
+	set(WAYLAND_API OFF)
+	set(USE_BACKTRACE OFF)
+	set(USE_OPENGL OFF)
+elseif(UNIX AND NOT APPLE)
 	option(ENABLE_SETCAP "Enable networking capability for DEV9" OFF)
 	option(X11_API "Enable X11 support" ON)
 	option(WAYLAND_API "Enable Wayland support" ON)

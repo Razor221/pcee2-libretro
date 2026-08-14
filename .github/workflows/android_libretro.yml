@@ -1,0 +1,79 @@
+name: 🤖 Android Libretro Core Builds
+
+# The buildbot job in .gitlab-ci.yml is what ships these cores; this workflow
+# exists because it can be run on demand, and because its runners come with an
+# NDK, which makes it the place to find out whether the Android build still
+# works before pushing to the buildbot.
+
+on:
+  push:
+    branches:
+      - libretro-android
+      - "libretro-android-*"
+  workflow_dispatch:
+
+jobs:
+  build_android:
+    name: "Android ${{ matrix.abi }}"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, x86_64]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build python3 git
+
+      - name: Cache Dependencies
+        id: cache-deps
+        uses: actions/cache@v6
+        with:
+          path: deps
+          key: android-${{ matrix.abi }}-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-android.sh') }}
+
+      - name: Build Dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        env:
+          ANDROID_ABI: ${{ matrix.abi }}
+          ANDROID_API: "24"
+        run: |
+          export ANDROID_NDK="$ANDROID_NDK_LATEST_HOME"
+          bash pcee2-libretro/scripts/build-deps-android.sh "$PWD/deps"
+
+      - name: Generate CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-24 \
+            -DANDROID_STL=c++_static \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON \
+            -DCMAKE_PREFIX_PATH="$PWD/deps" \
+            -DCMAKE_FIND_ROOT_PATH="$PWD/deps" \
+            -DSHADERC_STATIC=ON \
+            "-DSHADERC_LIBRARY=$PWD/deps/lib/libshaderc_combined.a" \
+            -DDISABLE_ADVANCE_SIMD=ON
+
+      - name: Build Core
+        run: cmake --build build --target pcee2_libretro
+
+      - name: Prepare Artifact
+        run: |
+          mkdir artifact
+          cp build/bin/pcee2_libretro.so artifact/pcee2_libretro_android.so
+          cp pcee2-libretro/pcee2_libretro.info artifact/
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pcee2_libretro-android-${{ matrix.abi }}
+          path: artifact/*

@@ -13,14 +13,16 @@
 
 #include "fmt/format.h"
 
-#include <dbus/dbus.h>
 #include <spawn.h>
 #include <sys/sysinfo.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifndef __ANDROID__
+#include <dbus/dbus.h>
 #include <X11/Xlib.h>
 #include <X11/extensions/XInput2.h>
+#endif
 
 #include <cstdlib>
 #include <cstring>
@@ -139,6 +141,8 @@ std::string GetOSVersionString()
 	return "Other Unix";
 #endif
 }
+
+#ifndef __ANDROID__
 
 static bool SetScreensaverInhibitDBus(const bool inhibit_requested, const char* program_name, const char* reason)
 {
@@ -328,6 +332,33 @@ void Common::DetachMousePositionCb()
 		mouseThread.join();
 	}
 }
+
+#else // __ANDROID__
+
+// The session bus and the X server that the implementations above talk to do
+// not exist here, and a touchscreen has no pointer to warp: the platform keeps
+// the screen awake for whoever holds the wake lock, and mouse position belongs
+// to whatever is hosting the emulator.
+
+bool Common::InhibitScreensaver(bool inhibit)
+{
+	return false;
+}
+
+void Common::SetMousePosition(int x, int y)
+{
+}
+
+bool Common::AttachMousePositionCb(std::function<void(int, int)> cb)
+{
+	return false;
+}
+
+void Common::DetachMousePositionCb()
+{
+}
+
+#endif // __ANDROID__
 
 bool Common::PlaySoundAsync(const char* path)
 {
