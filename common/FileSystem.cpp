@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "FileSystem.h"
+#include "FileSystemVFS.h"
 #include "Error.h"
 #include "Path.h"
 #include "Assertions.h"
@@ -980,6 +981,9 @@ std::string Path::CreateFileURL(std::string_view path)
 
 std::FILE* FileSystem::OpenCFile(const char* filename, const char* mode, Error* error)
 {
+	if (VFS::IsActive())
+		return VFS::OpenFile(filename, mode, error);
+
 #ifdef _WIN32
 	const std::wstring wfilename = GetWin32Path(filename);
 	const std::wstring wmode = StringUtil::UTF8StringToWideString(mode);
@@ -1015,6 +1019,40 @@ std::FILE* FileSystem::OpenCFile(const char* filename, const char* mode, Error* 
 
 std::FILE* FileSystem::OpenCFileTryIgnoreCase(const char* filename, const char* mode, Error* error)
 {
+	if (VFS::IsActive())
+	{
+		// Case folding, where the frontend's storage does it at all, is the
+		// frontend's business - it is the only side that can enumerate the
+		// directory to find the differently-cased name.
+		if (std::FILE* fp = VFS::OpenFile(filename, mode, nullptr))
+			return fp;
+
+		if (!VFS::HasPathOps())
+		{
+			Error::SetErrno(error, ENOENT);
+			return nullptr;
+		}
+
+		FindResultsArray files;
+		const std::string dir = std::string(Path::GetDirectory(filename));
+		if (FindFiles(dir.c_str(), "*", FILESYSTEM_FIND_FILES | FILESYSTEM_FIND_HIDDEN_FILES, &files))
+		{
+			for (const FILESYSTEM_FIND_DATA& file : files)
+			{
+				if (StringUtil::compareNoCase(file.FileName, filename))
+				{
+					if (std::FILE* fp = VFS::OpenFile(file.FileName.c_str(), mode, nullptr))
+						return fp;
+
+					break;
+				}
+			}
+		}
+
+		Error::SetErrno(error, ENOENT);
+		return nullptr;
+	}
+
 #if defined(_WIN32) || defined(__APPLE__)
 	return OpenCFile(filename, mode, error);
 #else
@@ -1072,6 +1110,11 @@ FileSystem::ManagedCFilePtr FileSystem::OpenManagedCFileTryIgnoreCase(const char
 
 std::FILE* FileSystem::OpenSharedCFile(const char* filename, const char* mode, FileShareMode share_mode, Error* error)
 {
+	// The frontend interface has no sharing modes; like the POSIX path below,
+	// the request degrades to an ordinary open.
+	if (VFS::IsActive())
+		return VFS::OpenFile(filename, mode, error);
+
 #ifdef _WIN32
 	const std::wstring wfilename = GetWin32Path(filename);
 	const std::wstring wmode = StringUtil::UTF8StringToWideString(mode);
@@ -1301,6 +1344,11 @@ static std::span<const u8> MapBinaryFileForRead(int fd)
 
 std::span<const u8> FileSystem::MapBinaryFileForRead(const char* path)
 {
+	// There is no descriptor behind a frontend file handle to map, so the
+	// contents are read into memory instead and freed again by UnmapFile().
+	if (VFS::IsActive())
+		return VFS::MapWholeFile(path);
+
 #ifdef _WIN32
 	const std::wstring wpath = GetWin32Path(path);
 	HANDLE handle = CreateFileW(wpath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -1321,6 +1369,9 @@ std::span<const u8> FileSystem::MapBinaryFileForRead(const char* path)
 
 std::span<const u8> FileSystem::MapBinaryFileForRead(std::FILE* fp)
 {
+	if (VFS::IsVFSStream(fp))
+		return VFS::MapWholeStream(fp);
+
 #ifdef _WIN32
 	return ::MapBinaryFileForRead(reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(fp))));
 #else
@@ -1330,6 +1381,9 @@ std::span<const u8> FileSystem::MapBinaryFileForRead(std::FILE* fp)
 
 void FileSystem::UnmapFile(std::span<const u8> file)
 {
+	if (VFS::UnmapWholeFile(file))
+		return;
+
 #ifdef _WIN32
 	UnmapViewOfFile(const_cast<u8*>(file.data()));
 #else
@@ -1578,6 +1632,9 @@ static u32 RecursiveFindFiles(const char* origin_path, const char* parent_path, 
 
 bool FileSystem::FindFiles(const char* path, const char* pattern, u32 flags, FindResultsArray* results, ProgressCallback* cancel)
 {
+	if (const std::optional<bool> res = VFS::FindFiles(path, pattern, flags, results, cancel))
+		return res.value();
+
 	// has a path
 	if (path[0] == '\0')
 		return false;
@@ -1666,6 +1723,9 @@ bool FileSystem::StatFile(std::FILE* fp, struct stat* st)
 
 bool FileSystem::StatFile(const char* path, FILESYSTEM_STAT_DATA* sd)
 {
+	if (const std::optional<bool> res = VFS::StatPath(path, sd))
+		return res.value();
+
 	// has a path
 	if (path[0] == '\0')
 		return false;
@@ -1718,6 +1778,16 @@ bool FileSystem::StatFile(const char* path, FILESYSTEM_STAT_DATA* sd)
 
 bool FileSystem::StatFile(std::FILE* fp, FILESYSTEM_STAT_DATA* sd)
 {
+	if (const std::optional<s64> size = VFS::GetStreamSize(fp))
+	{
+		// The frontend interface knows a handle's size and nothing else about it.
+		sd->CreationTime = 0;
+		sd->ModificationTime = 0;
+		sd->Attributes = 0;
+		sd->Size = size.value();
+		return true;
+	}
+
 	const int fd = _fileno(fp);
 	if (fd < 0)
 		return false;
@@ -1744,6 +1814,9 @@ bool FileSystem::StatFile(std::FILE* fp, FILESYSTEM_STAT_DATA* sd)
 
 bool FileSystem::FileExists(const char* path)
 {
+	if (const std::optional<bool> res = VFS::FileExists(path))
+		return res.value();
+
 	// has a path
 	if (path[0] == '\0')
 		return false;
@@ -1766,6 +1839,9 @@ bool FileSystem::FileExists(const char* path)
 
 bool FileSystem::DirectoryExists(const char* path)
 {
+	if (const std::optional<bool> res = VFS::DirectoryExists(path))
+		return res.value();
+
 	// has a path
 	if (path[0] == '\0')
 		return false;
@@ -1788,6 +1864,9 @@ bool FileSystem::DirectoryExists(const char* path)
 
 bool FileSystem::DirectoryIsEmpty(const char* path)
 {
+	if (const std::optional<bool> res = VFS::DirectoryIsEmpty(path))
+		return res.value();
+
 	std::wstring wpath = GetWin32Path(path);
 	wpath += L"\\*";
 
@@ -1815,6 +1894,13 @@ bool FileSystem::DirectoryIsEmpty(const char* path)
 
 bool FileSystem::CreateDirectoryPath(const char* Path, bool Recursive, Error* error)
 {
+	if (const std::optional<bool> res = VFS::CreateDirectoryPath(Path, Recursive))
+	{
+		if (!res.value())
+			Error::SetStringView(error, "Frontend refused to create the directory.");
+		return res.value();
+	}
+
 	const std::wstring wpath = GetWin32Path(Path);
 
 	// has a path
@@ -1924,6 +2010,13 @@ bool FileSystem::CreateDirectoryPath(const char* Path, bool Recursive, Error* er
 
 bool FileSystem::DeleteFilePath(const char* path, Error* error)
 {
+	if (const std::optional<bool> res = VFS::DeleteFilePath(path))
+	{
+		if (!res.value())
+			Error::SetStringView(error, "Frontend refused to delete the file.");
+		return res.value();
+	}
+
 	if (path[0] == '\0')
 	{
 		Error::SetStringView(error, "Path is empty.");
@@ -1949,6 +2042,13 @@ bool FileSystem::DeleteFilePath(const char* path, Error* error)
 
 bool FileSystem::RenamePath(const char* old_path, const char* new_path, Error* error)
 {
+	if (const std::optional<bool> res = VFS::RenamePath(old_path, new_path))
+	{
+		if (!res.value())
+			Error::SetStringView(error, "Frontend refused to rename the file.");
+		return res.value();
+	}
+
 	const std::wstring old_wpath = GetWin32Path(old_path);
 	const std::wstring new_wpath = GetWin32Path(new_path);
 
@@ -1965,6 +2065,9 @@ bool FileSystem::RenamePath(const char* old_path, const char* new_path, Error* e
 
 bool FileSystem::DeleteDirectory(const char* path)
 {
+	if (const std::optional<bool> res = VFS::DeleteDirectory(path))
+		return res.value();
+
 	const std::wstring wpath = GetWin32Path(path);
 	return RemoveDirectoryW(wpath.c_str());
 }
@@ -2264,6 +2367,9 @@ static u32 RecursiveFindFiles(const char* OriginPath, const char* ParentPath, co
 
 bool FileSystem::FindFiles(const char* path, const char* pattern, u32 flags, FindResultsArray* results, ProgressCallback* cancel)
 {
+	if (const std::optional<bool> res = VFS::FindFiles(path, pattern, flags, results, cancel))
+		return res.value();
+
 	// has a path
 	if (path[0] == '\0')
 		return false;
@@ -2318,6 +2424,9 @@ bool FileSystem::StatFile(std::FILE* fp, struct stat* st)
 
 bool FileSystem::StatFile(const char* path, FILESYSTEM_STAT_DATA* sd)
 {
+	if (const std::optional<bool> res = VFS::StatPath(path, sd))
+		return res.value();
+
 	// has a path
 	if (path[0] == '\0')
 		return false;
@@ -2346,6 +2455,16 @@ bool FileSystem::StatFile(const char* path, FILESYSTEM_STAT_DATA* sd)
 
 bool FileSystem::StatFile(std::FILE* fp, FILESYSTEM_STAT_DATA* sd)
 {
+	if (const std::optional<s64> size = VFS::GetStreamSize(fp))
+	{
+		// The frontend interface knows a handle's size and nothing else about it.
+		sd->CreationTime = 0;
+		sd->ModificationTime = 0;
+		sd->Attributes = 0;
+		sd->Size = size.value();
+		return true;
+	}
+
 	const int fd = fileno(fp);
 	if (fd < 0)
 		return false;
@@ -2374,6 +2493,9 @@ bool FileSystem::StatFile(std::FILE* fp, FILESYSTEM_STAT_DATA* sd)
 
 bool FileSystem::FileExists(const char* path)
 {
+	if (const std::optional<bool> res = VFS::FileExists(path))
+		return res.value();
+
 	// has a path
 	if (path[0] == '\0')
 		return false;
@@ -2391,6 +2513,9 @@ bool FileSystem::FileExists(const char* path)
 
 bool FileSystem::DirectoryExists(const char* path)
 {
+	if (const std::optional<bool> res = VFS::DirectoryExists(path))
+		return res.value();
+
 	// has a path
 	if (path[0] == '\0')
 		return false;
@@ -2408,6 +2533,9 @@ bool FileSystem::DirectoryExists(const char* path)
 
 bool FileSystem::DirectoryIsEmpty(const char* path)
 {
+	if (const std::optional<bool> res = VFS::DirectoryIsEmpty(path))
+		return res.value();
+
 	DIR* pDir = opendir(path);
 	if (pDir == nullptr)
 		return true;
@@ -2432,6 +2560,13 @@ bool FileSystem::DirectoryIsEmpty(const char* path)
 
 bool FileSystem::CreateDirectoryPath(const char* path, bool recursive, Error* error)
 {
+	if (const std::optional<bool> res = VFS::CreateDirectoryPath(path, recursive))
+	{
+		if (!res.value())
+			Error::SetStringView(error, "Frontend refused to create the directory.");
+		return res.value();
+	}
+
 	// has a path
 	const size_t pathLength = std::strlen(path);
 	if (pathLength == 0)
@@ -2510,6 +2645,13 @@ bool FileSystem::CreateDirectoryPath(const char* path, bool recursive, Error* er
 
 bool FileSystem::DeleteFilePath(const char* path, Error* error)
 {
+	if (const std::optional<bool> res = VFS::DeleteFilePath(path))
+	{
+		if (!res.value())
+			Error::SetStringView(error, "Frontend refused to delete the file.");
+		return res.value();
+	}
+
 	if (path[0] == '\0')
 	{
 		Error::SetStringView(error, "Path is empty.");
@@ -2534,6 +2676,13 @@ bool FileSystem::DeleteFilePath(const char* path, Error* error)
 
 bool FileSystem::RenamePath(const char* old_path, const char* new_path, Error* error)
 {
+	if (const std::optional<bool> res = VFS::RenamePath(old_path, new_path))
+	{
+		if (!res.value())
+			Error::SetStringView(error, "Frontend refused to rename the file.");
+		return res.value();
+	}
+
 	if (old_path[0] == '\0' || new_path[0] == '\0')
 	{
 		Error::SetStringView(error, "Path is empty.");
@@ -2553,6 +2702,9 @@ bool FileSystem::RenamePath(const char* old_path, const char* new_path, Error* e
 
 bool FileSystem::DeleteDirectory(const char* path)
 {
+	if (const std::optional<bool> res = VFS::DeleteDirectory(path))
+		return res.value();
+
 	if (path[0] == '\0')
 		return false;
 
