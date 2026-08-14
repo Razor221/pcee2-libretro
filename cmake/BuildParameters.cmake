@@ -89,8 +89,17 @@ mark_as_advanced(CMAKE_C_FLAGS_DEVEL CMAKE_CXX_FLAGS_DEVEL CMAKE_LINKER_FLAGS_DE
 #-------------------------------------------------------------------------------
 # Select the architecture
 #-------------------------------------------------------------------------------
-if("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "amd64" OR
-   "${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "AMD64" OR "${CMAKE_OSX_ARCHITECTURES}" STREQUAL "x86_64")
+# Every build but Android's is a native one, where the host processor is also
+# the target. Android cross-compiles, so there the toolchain's target processor
+# is what decides which recompiler gets built.
+if(ANDROID)
+	set(PCSX2_TARGET_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
+else()
+	set(PCSX2_TARGET_PROCESSOR "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+endif()
+
+if("${PCSX2_TARGET_PROCESSOR}" STREQUAL "x86_64" OR "${PCSX2_TARGET_PROCESSOR}" STREQUAL "amd64" OR
+   "${PCSX2_TARGET_PROCESSOR}" STREQUAL "AMD64" OR "${CMAKE_OSX_ARCHITECTURES}" STREQUAL "x86_64")
 	# Multi-ISA only exists on x86.
 	option(DISABLE_ADVANCE_SIMD "Disable advance use of SIMD (SSE2+ & AVX)" OFF)
 
@@ -112,7 +121,9 @@ if("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_HOST_SYSTEM_PR
 		endif()
 	else()
 		# Multi-ISA => SSE4, otherwise native.
-		if (DISABLE_ADVANCE_SIMD)
+		if (DISABLE_ADVANCE_SIMD OR ANDROID)
+			# -march=native means the build machine on a cross-compile, which is
+			# not what an Android x86_64 core will run on.
 			add_compile_options("-msse" "-msse2" "-msse4.1" "-mfxsr")
 		else()
 			# Can't use march=native on Apple Silicon.
@@ -121,13 +132,18 @@ if("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_HOST_SYSTEM_PR
 			endif()
 		endif()
 	endif()
-elseif("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "arm64" OR "${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "aarch64" OR
+elseif("${PCSX2_TARGET_PROCESSOR}" STREQUAL "arm64" OR "${PCSX2_TARGET_PROCESSOR}" STREQUAL "aarch64" OR
        "${CMAKE_OSX_ARCHITECTURES}" STREQUAL "arm64")
-	message(STATUS "Building for Apple Silicon (ARM64).")
+	message(STATUS "Building for ARM64.")
 	set(ARCH_ARM64 TRUE)
 	if(APPLE)
 		# Min spec is an M1
 		add_compile_options("-march=armv8.4-a" "-mcpu=apple-m1")
+	elseif(ANDROID)
+		# armv8.0 is the floor for arm64-v8a: phones without the 8.1 atomics
+		# are still out there, and the compiler would otherwise emit LSE
+		# instructions that fault on them.
+		add_compile_options("-march=armv8-a+crc")
 	else()
 		# Require atomic rmw instructions
 		add_compile_options("-march=armv8.1-a")
@@ -149,7 +165,7 @@ elseif("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "arm64" OR "${CMAKE_HOST_SYSTEM
 		list(APPEND PCSX2_DEFS OVERRIDE_HOST_CACHE_LINE_SIZE=64)
 	endif()
 else()
-	message(FATAL_ERROR "Unsupported architecture: ${CMAKE_HOST_SYSTEM_PROCESSOR}")
+	message(FATAL_ERROR "Unsupported architecture: ${PCSX2_TARGET_PROCESSOR}")
 endif()
 
 # Require C++20.
