@@ -25,6 +25,21 @@
 #include "cpuinfo.h"
 #endif
 
+#if defined(__ANDROID__)
+#include <dlfcn.h>
+#include <sys/ioctl.h>
+#if __has_include(<linux/ashmem.h>)
+#include <linux/ashmem.h>
+#endif
+// The ashmem ioctls are not in every NDK sysroot, but their numbers are part
+// of the kernel ABI and the driver has to be spoken to on API < 26.
+#ifndef ASHMEM_SET_NAME
+#define __ASHMEMIOC 0x77
+#define ASHMEM_SET_NAME _IOW(__ASHMEMIOC, 1, char[256])
+#define ASHMEM_SET_SIZE _IOW(__ASHMEMIOC, 3, size_t)
+#endif
+#endif
+
 static __ri uint LinuxProt(const PageProtectionMode& mode)
 {
 	u32 lnxmode = 0;
@@ -63,6 +78,38 @@ std::string HostSys::GetFileMappingName(const char* prefix)
 
 void* HostSys::CreateSharedMemory(const char* name, size_t size)
 {
+#if defined(__ANDROID__)
+	// Bionic has no shm_open; anonymous shared memory comes from ashmem here.
+	// ASharedMemory_create is the supported way in, but it is API 26 and the
+	// core builds against 24, so it is reached through dlsym and the raw
+	// device is the fallback (that one stops working on API 29).
+	static void* libandroid = dlopen("libandroid.so", RTLD_LAZY | RTLD_LOCAL);
+	static auto shared_memory_create =
+		reinterpret_cast<int (*)(const char*, size_t)>(libandroid ? dlsym(libandroid, "ASharedMemory_create") : nullptr);
+
+	int fd = shared_memory_create ? shared_memory_create(name, size) : -1;
+	if (fd < 0)
+	{
+		fd = open("/dev/ashmem", O_RDWR);
+		if (fd < 0)
+		{
+			std::fprintf(stderr, "ashmem open failed: %d\n", errno);
+			return nullptr;
+		}
+
+		// The name is only cosmetic (it shows up in the region listing), the
+		// size is what actually has to take.
+		ioctl(fd, ASHMEM_SET_NAME, name);
+		if (ioctl(fd, ASHMEM_SET_SIZE, size) < 0)
+		{
+			std::fprintf(stderr, "ASHMEM_SET_SIZE(%zu) failed: %d\n", size, errno);
+			close(fd);
+			return nullptr;
+		}
+	}
+
+	return reinterpret_cast<void*>(static_cast<intptr_t>(fd));
+#else
 	const int fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR, 0600);
 	if (fd < 0)
 	{
@@ -81,6 +128,7 @@ void* HostSys::CreateSharedMemory(const char* name, size_t size)
 	}
 
 	return reinterpret_cast<void*>(static_cast<intptr_t>(fd));
+#endif
 }
 
 void HostSys::DestroySharedMemory(void* ptr)

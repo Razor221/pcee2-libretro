@@ -362,7 +362,9 @@ void Common::DetachMousePositionCb()
 
 bool Common::PlaySoundAsync(const char* path)
 {
-#ifdef __linux__
+	// Android has no posix_spawn before API 28, and none of the players this
+	// shells out to in the first place.
+#if defined(__linux__) && !defined(__ANDROID__)
 	// This is... pretty awful. But I can't think of a better way without linking to e.g. gstreamer.
 	const char* cmdname = "aplay";
 	const char* argv[] = {cmdname, path, nullptr};
