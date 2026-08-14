@@ -70,7 +70,10 @@ jobs:
         run: |
           mkdir artifact
           cp build/bin/pcee2_libretro.so artifact/pcee2_libretro_android.so
+          # Same as the buildbot does: unstripped this is ~260 MB of debug info.
+          "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" artifact/pcee2_libretro_android.so
           cp pcee2-libretro/pcee2_libretro.info artifact/
+          ls -lh artifact/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v7

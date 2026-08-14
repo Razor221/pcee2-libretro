@@ -53,6 +53,10 @@ include:
   - project: 'libretro-infrastructure/ci-templates'
     file: '/windows-cmake-mingw.yml'
 
+  # Android: the NDK cross-build, for the Play Store RetroArch (issue #10).
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/android-cmake.yml'
+
 # The stock libretro build images are ancient Ubuntu (xenial/bionic): their
 # CMake (3.20), gcc, and system libs (PNG 1.2, zstd, webp, lz4) are far too old
 # for PCSX2's pinned versions (PNG 1.6.40, zstd 1.5.5, ...). Override the image
@@ -91,6 +95,25 @@ include:
 # all on the wrong machine.
 .pcee2-deps-linux: &pcee2-deps-linux
   - PCEE2_SDL_STATIC=1 PCEE2_BUILD_JPEG=1 bash pcee2-libretro/scripts/build-deps-linux.sh "$CI_PROJECT_DIR/deps"
+
+# The Android image has the NDK but not the tools the dependency recipe drives,
+# and none of the libraries either - everything it needs is built from source
+# into $CI_PROJECT_DIR/deps first, exactly like the Windows cross-build.
+.pcee2-setup-android: &pcee2-setup-android
+  - export DEBIAN_FRONTEND=noninteractive
+  - apt-get update
+  - apt-get install -y --no-install-recommends cmake ninja-build python3 git ca-certificates
+  # The template's own before_script - the one that sets the NUMPROC its build
+  # line passes to -j - is replaced by this one, so set it here, capped by
+  # available RAM the same way the Linux jobs do.
+  - NUMPROC=$(nproc); MEMGB=$(awk '/MemTotal/{print int($2/1024/1024)}' /proc/meminfo)
+  - CAP=$((MEMGB/2)); [ "$CAP" -lt 1 ] && CAP=1; [ "$NUMPROC" -gt "$CAP" ] && NUMPROC=$CAP
+  - export NUMPROC; echo "NUMPROC=$NUMPROC (cores=$(nproc), mem=${MEMGB}GB)"
+  - |
+    if [ ! -f "$CI_PROJECT_DIR/deps/lib/libshaderc_combined.a" ]; then
+      ANDROID_NDK="$NDK_ROOT" ANDROID_ABI="$ANDROID_ABI" ANDROID_API="$API_LEVEL" \
+        bash pcee2-libretro/scripts/build-deps-android.sh "$CI_PROJECT_DIR/deps"
+    fi
 
 stages:
   - build-prepare
@@ -161,3 +184,34 @@ libretro-build-windows-x64:
     # CMAKE_FIND_ROOT_PATH workaround and the static .a shaderc path.
     # MinGW/Ninja is a single-config generator, so the .dll lands straight in bin.
     EXTRA_PATH: bin
+
+# Android. Both ABIs the Play Store build ships; API 24 is the floor because the
+# frontend's VFS handles are wrapped in stdio streams through funopen64, which
+# arrives there.
+#
+# Still experimental, like the Windows job: the Linux cores are what ships.
+.pcee2-android:
+  allow_failure: true
+  extends:
+    - .core-defs
+  before_script:
+    - *pcee2-setup-android
+  cache:
+    key:
+      files:
+        - pcee2-libretro/scripts/build-deps-android.sh
+      prefix: android-$ANDROID_ABI
+    paths:
+      - deps/
+  variables:
+    API_LEVEL: 24
+
+libretro-build-android-arm64-v8a:
+  extends:
+    - .libretro-android-cmake-arm64-v8a
+    - .pcee2-android
+
+libretro-build-android-x86_64:
+  extends:
+    - .libretro-android-cmake-x86_64
+    - .pcee2-android
