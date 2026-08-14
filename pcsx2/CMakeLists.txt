@@ -1199,6 +1199,15 @@ target_sources(PCSX2 PRIVATE
 )
 
 # platform sources
+if(ANDROID)
+	target_link_libraries(PCSX2_FLAGS INTERFACE
+		# webp's own config does not carry this one, see SearchForStuff.cmake
+		${SHARPYUV_LIBRARY}
+		android
+		log
+	)
+endif()
+
 if(LINUX OR ANDROID)
 	target_sources(PCSX2 PRIVATE
 		${pcsx2LinuxSources}
