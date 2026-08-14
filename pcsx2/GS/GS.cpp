@@ -46,6 +46,7 @@
 
 #include "common/Console.h"
 #include "common/FileSystem.h"
+#include "common/HostSys.h"
 #include "common/Path.h"
 #include "common/SmallString.h"
 #include "common/StringUtil.h"
@@ -1005,6 +1006,18 @@ void* GSAllocateWrappedMemory(size_t size, size_t repeat)
 	pxAssert(s_shm_fd == -1);
 
 	const char* file_name = "/GS.mem";
+#if defined(__ANDROID__)
+	// No shm_open in bionic: HostSys hands back an ashmem descriptor instead,
+	// whose size is fixed when it is created rather than by ftruncate.
+	void* handle = HostSys::CreateSharedMemory(file_name, repeat * size);
+	if (!handle)
+	{
+		fprintf(stderr, "Failed to allocate %zu bytes of shared memory for %s\n", repeat * size, file_name);
+		return nullptr;
+	}
+
+	s_shm_fd = static_cast<int>(reinterpret_cast<intptr_t>(handle));
+#else
 	s_shm_fd = shm_open(file_name, O_RDWR | O_CREAT | O_EXCL, 0600);
 	if (s_shm_fd != -1)
 	{
@@ -1018,6 +1031,7 @@ void* GSAllocateWrappedMemory(size_t size, size_t repeat)
 
 	if (ftruncate(s_shm_fd, repeat * size) < 0)
 		fprintf(stderr, "Failed to reserve memory due to %s\n", strerror(errno));
+#endif
 
 	void* fifo = mmap(nullptr, size * repeat, PROT_READ | PROT_WRITE, MAP_SHARED, s_shm_fd, 0);
 
