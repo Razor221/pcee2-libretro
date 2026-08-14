@@ -69,6 +69,7 @@
 
 #include "libretro.h"
 #include "libretro_vulkan.h"
+#include "LibretroVFS.h"
 
 #include "fmt/format.h"
 
@@ -1110,6 +1111,11 @@ void retro_set_environment(retro_environment_t cb)
 	if (cb(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &log_cb))
 		s_log_cb = log_cb.log;
 
+	// Has to happen before anything touches a file - on Android the content,
+	// and possibly the system and save directories too, are only reachable
+	// through the frontend.
+	InitializeVFS(cb);
+
 	RegisterCoreOptions();
 }
 
@@ -1166,6 +1172,8 @@ void retro_init(void)
 	}
 
 	Log::SetHostOutputLevel(LOGLEVEL_INFO, &HostLogCallback);
+
+	LogVFSStatus();
 }
 
 void retro_deinit(void)

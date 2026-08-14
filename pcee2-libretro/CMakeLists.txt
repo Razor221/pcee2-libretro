@@ -22,6 +22,8 @@ add_custom_command(TARGET pcee2_libretro POST_BUILD
 
 target_sources(pcee2_libretro PRIVATE
 	Libretro.cpp
+	LibretroVFS.cpp
+	LibretroVFS.h
 	libretro.h
 )
 
