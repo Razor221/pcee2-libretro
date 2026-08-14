@@ -189,9 +189,9 @@ libretro-build-windows-x64:
 # frontend's VFS handles are wrapped in stdio streams through funopen64, which
 # arrives there.
 #
-# Still experimental, like the Windows job: the Linux cores are what ships.
+# Both ABIs came up green on the buildbot the first time they ran there
+# (pipeline 100833), so these count like the Linux jobs do.
 .pcee2-android:
-  allow_failure: true
   extends:
     - .core-defs
   before_script:
