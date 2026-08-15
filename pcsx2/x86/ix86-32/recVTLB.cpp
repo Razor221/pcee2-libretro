@@ -116,6 +116,24 @@ static void __vectorcall LogWriteQuad(u32 addr, __m128i val)
 }
 #endif
 
+#if R128_ARGS_BY_REFERENCE
+// Where a quadword being handed to a memory handler is spilled, so that its
+// address can be passed instead of the value (see the macro's definition).
+// One buffer is enough: only the EE recompiler emits these calls, and the
+// handler loads the value in its first instruction, before anything it goes on
+// to call can reach this again. Aligned because the load on the other side is.
+alignas(16) static u128 s_r128_arg_scratch;
+
+// Emits the pointer half of such a call: spills the vector argument register to
+// the scratch and leaves its address in the second integer argument register.
+static void DynGen_R128ArgPointer()
+{
+	_freeX86reg(arg2regd);
+	xLoadFarAddr(arg2reg, &s_r128_arg_scratch);
+	xMOVAPS(ptr128[arg2reg], xRegisterSSE::GetArgRegister(1, 0));
+}
+#endif
+
 namespace vtlb_private
 {
 	// ------------------------------------------------------------------------
@@ -134,6 +152,13 @@ namespace vtlb_private
 				pxAssert(xmm);
 				_freeXMMreg(xRegisterSSE::GetArgRegister(1, 0).GetId());
 				xMOVAPS(xRegisterSSE::GetArgRegister(1, 0), xRegisterSSE::GetInstance(value_reg));
+#if R128_ARGS_BY_REFERENCE
+				// The handler wants a pointer, but the direct write a few lines
+				// down still takes the value out of the vector register, and
+				// which of the two runs is only decided at runtime - so set up
+				// both.
+				DynGen_R128ArgPointer();
+#endif
 			}
 			else if (xmm)
 			{
@@ -880,6 +905,9 @@ void vtlb_DynGenWrite_Const(u32 bits, bool xmm, u32 addr_const, int value_reg)
 			const xRegisterSSE argreg(xRegisterSSE::GetArgRegister(1, 0));
 			_freeXMMreg(argreg.GetId());
 			xMOVAPS(argreg, xRegisterSSE(value_reg));
+#if R128_ARGS_BY_REFERENCE
+			DynGen_R128ArgPointer();
+#endif
 		}
 		else if (xmm)
 		{

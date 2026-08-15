@@ -124,6 +124,28 @@ static constexpr unsigned int __pagealignsize = 0x1000;
 #endif
 
 // --------------------------------------------------------------------------------------
+//  R128_ARGS_BY_REFERENCE
+// --------------------------------------------------------------------------------------
+// Whether the C++ ABI hands a 16-byte vector parameter (r128, i.e. the TAKES_R128
+// memory handlers) over as a pointer rather than in a vector register.
+//
+// That is what the plain Microsoft x64 ABI does with any argument which is not
+// 1, 2, 4 or 8 bytes wide, and it is what MinGW builds get: __vectorcall - which
+// would have passed it in a register - is defined away above because GCC has no
+// such thing on Windows. MSVC and clang-cl honour __vectorcall, and the SysV ABI
+// passes vectors in registers unconditionally, so only this one combination is
+// affected. Returns are fine everywhere: MS x64 returns a 16-byte vector in xmm0
+// like SysV does.
+//
+// The recompilers emit these calls themselves, so they cannot see the signature
+// and have to be told (see the r128 argument handling in recVTLB.cpp).
+#if defined(_WIN32) && defined(__GNUC__) && !defined(__clang__)
+#define R128_ARGS_BY_REFERENCE 1
+#else
+#define R128_ARGS_BY_REFERENCE 0
+#endif
+
+// --------------------------------------------------------------------------------------
 // __releaseinline / __ri -- a forceinline macro that is enabled for RELEASE/PUBLIC builds ONLY.
 // --------------------------------------------------------------------------------------
 // This is useful because forceinline can make certain types of debugging problematic since
