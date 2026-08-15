@@ -134,6 +134,13 @@ namespace VKLibretro
 
 	void InstallWraps()
 	{
+		// Idempotent: the loader entry points survive a session now (the
+		// library is no longer unloaded under the frontend), so a second
+		// retro_load_game() would otherwise capture our own wrapper as the
+		// "original" and recurse into it forever.
+		if (vkGetInstanceProcAddr == vkGetInstanceProcAddr_libretro)
+			return;
+
 		s_vkGetInstanceProcAddr_org = vkGetInstanceProcAddr;
 		vkGetInstanceProcAddr = vkGetInstanceProcAddr_libretro;
 	}

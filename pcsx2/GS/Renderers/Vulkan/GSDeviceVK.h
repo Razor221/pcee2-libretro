@@ -251,6 +251,15 @@ private:
 	VkInstance m_instance = VK_NULL_HANDLE;
 	VkPhysicalDevice m_physical_device = VK_NULL_HANDLE;
 	VkDevice m_device = VK_NULL_HANDLE;
+
+	// Whether this device created the instance/device and so has to destroy
+	// them. Under libretro both belong to the frontend, and the answer has to
+	// be recorded here at creation time rather than asked of VKLibretro in
+	// Destroy(): the GS thread can outlive retro_unload_game()'s teardown of
+	// that state, and destroying the frontend's objects leaves it calling into
+	// an ICD the Vulkan loader has already unloaded.
+	bool m_owns_instance = true;
+	bool m_owns_device = true;
 	VmaAllocator m_allocator = VK_NULL_HANDLE;
 
 	VkCommandBuffer m_current_command_buffer = VK_NULL_HANDLE;

@@ -50,6 +50,7 @@ namespace
 
 #include "imgui.h"
 
+#include <algorithm>
 #include <bit>
 #include <limits>
 #include <mutex>
@@ -702,6 +703,11 @@ bool GSDeviceVK::CreateDevice(VkSurfaceKHR surface, bool enable_validation_layer
 		LOG_VULKAN_ERROR(res, "vkCreateDevice failed: ");
 		return false;
 	}
+
+	// Under libretro this call is intercepted by the VKLibretro wraps, which
+	// hand the device straight back to the frontend as the negotiation result;
+	// it is the frontend that destroys it afterwards.
+	m_owns_device = !(VKLibretro::Active && VKLibretro::Init.device == m_device);
 
 	// With the device created, we can fill the remaining entry points.
 	if (!Vulkan::LoadVulkanDeviceFunctions(m_device))
@@ -2278,8 +2284,16 @@ bool GSDeviceVK::Create(GSVSyncMode vsync_mode, bool allow_present_throttle)
 void GSDeviceVK::Destroy()
 {
 	// Free the libretro backbuffers while the device is still alive; the
-	// frontend stopped sampling at context_destroy.
-	if (VKLibretro::Active)
+	// frontend stopped sampling at context_destroy. Keyed off the buffers
+	// themselves rather than VKLibretro::Active, which retro_unload_game() may
+	// already have cleared by the time the GS thread gets here - they would
+	// then survive until the static destructor runs at process exit and take
+	// the frontend down with them, unbinding textures from a dead device.
+	const bool have_libretro_bb =
+		std::any_of(std::begin(s_libretro_bb), std::end(s_libretro_bb),
+			[](const std::unique_ptr<GSTextureVK>& bb) { return static_cast<bool>(bb); }) ||
+		!s_libretro_bb_retired.empty();
+	if (have_libretro_bb)
 	{
 		WaitForGPUIdle();
 		for (std::unique_ptr<GSTextureVK>& bb : s_libretro_bb)
@@ -2307,21 +2321,28 @@ void GSDeviceVK::Destroy()
 
 	VKShaderCache::Destroy();
 
-	// The negotiated device belongs to the libretro frontend (it made the
-	// vkCreateDevice call) and it destroys it after context_destroy —
-	// destroying it here would leave the frontend tearing down a dead device.
-	if (m_device != VK_NULL_HANDLE)
-		if (!(VKLibretro::Active && VKLibretro::Init.device == m_device))
-			vkDestroyDevice(m_device, nullptr);
+	// The negotiated device and the instance belong to the libretro frontend,
+	// which destroys them itself once it is done with the context. Destroying
+	// them here is not merely redundant: vkDestroyInstance makes the Vulkan
+	// loader unload the ICD, so the frontend's next Vulkan call - it still has
+	// entry points resolved into that driver - jumps into unmapped memory.
+	// m_owns_* is recorded at creation time on purpose; this runs on the GS
+	// thread, which can still be closing down after retro_unload_game() has
+	// already cleared the VKLibretro state.
+	if (m_device != VK_NULL_HANDLE && m_owns_device)
+		vkDestroyDevice(m_device, nullptr);
 
 	if (m_debug_messenger_callback != VK_NULL_HANDLE)
 		DisableDebugUtils();
 
-	if (m_instance != VK_NULL_HANDLE)
-		if (!(VKLibretro::Active && VKLibretro::Init.instance == m_instance))
-			vkDestroyInstance(m_instance, nullptr);
+	if (m_instance != VK_NULL_HANDLE && m_owns_instance)
+		vkDestroyInstance(m_instance, nullptr);
 
-	Vulkan::UnloadVulkanLibrary();
+	// Same reasoning for the library itself: the frontend holds its own
+	// reference, but dropping ours resets the loader entry points that its
+	// context - and a later session of ours - still goes through.
+	if (m_owns_instance)
+		Vulkan::UnloadVulkanLibrary();
 }
 
 bool GSDeviceVK::UpdateWindow()
@@ -2775,9 +2796,14 @@ bool GSDeviceVK::CreateDeviceAndSwapChain()
 	// negotiation interface. Function loading still goes through the wrapped
 	// vkGetInstanceProcAddr so vkCreateDevice/vkQueueSubmit get intercepted.
 	if (VKLibretro::Active && VKLibretro::Init.instance != VK_NULL_HANDLE)
+	{
 		m_instance = VKLibretro::Init.instance;
+		m_owns_instance = false;
+	}
 	else
+	{
 		m_instance = CreateVulkanInstance(m_window_info, &m_optional_extensions, enable_debug_utils, enable_validation_layer);
+	}
 	if (m_instance == VK_NULL_HANDLE)
 	{
 		if (enable_debug_utils || enable_validation_layer)
