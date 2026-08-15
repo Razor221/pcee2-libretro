@@ -236,9 +236,18 @@ bool VMManager::PerformEarlyHardwareChecks(const char** error)
 	}
 #endif
 #elif defined(ARCH_ARM64)
-	// Check page size. If it doesn't match, it is a fatal error.
+	// Check page size. Everything we map, protect and align is sized with the
+	// compile-time __pagesize, and the vtlb already copes with it being larger
+	// than a guest page (it coalesces guest pages into one host page, and falls
+	// back to the slow path when they are not contiguous). So a build made for
+	// a larger page than the kernel's is merely over-aligned - every size and
+	// address it hands to mmap/mprotect is a multiple of the smaller page - and
+	// runs fine, which is what lets one 16KB Android core serve both the 16KB
+	// and the far more common 4KB devices. The other direction cannot work:
+	// mmap and mprotect reject the finer granularity outright, so that stays a
+	// fatal error.
 	const size_t runtime_host_page_size = HostSys::GetRuntimePageSize();
-	if (__pagesize != runtime_host_page_size)
+	if (__pagesize < runtime_host_page_size)
 	{
 		*error = "Page size mismatch. This build cannot run on your system.\n\n" COMMON_DOWNLOAD_MESSAGE;
 		return false;
