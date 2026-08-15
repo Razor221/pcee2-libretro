@@ -1135,7 +1135,7 @@ void retro_get_system_info(struct retro_system_info* info)
 	std::memset(info, 0, sizeof(*info));
 	info->library_name = "PCEE2";
 	info->library_version = GIT_REV;
-	info->valid_extensions = "iso|chd|cso|zso|gz|bin|mdf|nrg|elf|irx";
+	info->valid_extensions = "iso|chd|cue|cso|zso|gz|bin|mdf|nrg|elf|irx";
 	info->need_fullpath = true;
 	info->block_extract = true;
 }
@@ -1210,6 +1210,85 @@ void retro_deinit(void)
 	CrashHandler::Uninstall();
 }
 
+// Redump dumps the PS2's CD-ROM titles - and most demo discs - as a cue sheet
+// plus one or more binary tracks, so that is what a lot of libraries hold.
+// CDVD has no cue parser (it opens the image directly, auto-detecting 2048,
+// 2352 and 2448 byte sectors), so resolve the sheet here and boot the file its
+// data track lives in. Audio tracks are lost in the process, which is no worse
+// than the same disc converted to CHD: the ISO path reports a single-track TOC
+// for every image format it supports.
+static std::string ResolveCueSheet(const std::string& cue_path)
+{
+	const std::optional<std::string> sheet = FileSystem::ReadFileToString(cue_path.c_str());
+	if (!sheet.has_value())
+	{
+		Console.Error(fmt::format("Failed to read cue sheet '{}'.", cue_path));
+		return {};
+	}
+
+	// FILE "<name>" <format>, then the TRACK lines that belong to it. The
+	// first data track is the one to boot; the first file is the fallback for
+	// sheets whose first track is audio and which we therefore cannot serve
+	// properly anyway.
+	std::string_view first_file;
+	std::string_view current_file;
+	std::string_view data_file;
+	for (const std::string_view line : StringUtil::SplitString(sheet.value(), '\n'))
+	{
+		const std::string_view trimmed = StringUtil::StripWhitespace(line);
+		if (StringUtil::StartsWithNoCase(trimmed, "FILE"))
+		{
+			const std::string_view::size_type open_quote = trimmed.find('"');
+			const std::string_view::size_type close_quote =
+				(open_quote != std::string_view::npos) ? trimmed.find('"', open_quote + 1) : std::string_view::npos;
+			if (close_quote == std::string_view::npos)
+				continue;
+
+			current_file = trimmed.substr(open_quote + 1, close_quote - open_quote - 1);
+			if (first_file.empty())
+				first_file = current_file;
+		}
+		else if (StringUtil::StartsWithNoCase(trimmed, "TRACK") && data_file.empty())
+		{
+			// "TRACK 01 MODE1/2352" - anything but AUDIO carries the filesystem.
+			if (trimmed.find("AUDIO") == std::string_view::npos)
+				data_file = current_file;
+		}
+	}
+
+	const std::string_view chosen = data_file.empty() ? first_file : data_file;
+	if (chosen.empty())
+	{
+		Console.Error(fmt::format("Cue sheet '{}' names no track file.", cue_path));
+		return {};
+	}
+
+	// Track files are named relative to the sheet.
+	std::string path = Path::Combine(Path::GetDirectory(cue_path), chosen);
+	if (!FileSystem::FileExists(path.c_str()))
+	{
+		Console.Error(fmt::format("Cue sheet '{}' points at '{}', which does not exist.", cue_path, path));
+		return {};
+	}
+
+	Console.WriteLnFmt("Cue sheet '{}': booting track file '{}'.", cue_path, path);
+	return path;
+}
+
+// The frontend hands us whatever the user picked; everything except a cue
+// sheet goes to the VM as-is.
+static std::string ResolveContentPath(const char* path)
+{
+	if (StringUtil::compareNoCase(Path::GetExtension(path), "cue"))
+	{
+		std::string resolved = ResolveCueSheet(path);
+		if (!resolved.empty())
+			return resolved;
+	}
+
+	return path;
+}
+
 bool retro_load_game(const struct retro_game_info* game)
 {
 	if (!game || !game->path)
@@ -1282,7 +1361,7 @@ bool retro_load_game(const struct retro_game_info* game)
 	s_environ_cb(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE, &s_rumble_interface);
 
 	s_boot_params = VMBootParameters();
-	s_boot_params.filename = game->path;
+	s_boot_params.filename = ResolveContentPath(game->path);
 
 	{
 		std::unique_lock lock(s_frame_mutex);
