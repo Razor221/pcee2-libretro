@@ -586,7 +586,10 @@ void PageFaultHandler::SignalHandler(int sig, siginfo_t* info, void* ctx)
 #elif defined(ARCH_ARM64)
 	void* const exception_address = reinterpret_cast<void*>(static_cast<ucontext_t*>(ctx)->uc_mcontext->__es.__far);
 	void* const exception_pc = reinterpret_cast<void*>(static_cast<ucontext_t*>(ctx)->uc_mcontext->__ss.__pc);
-	const bool is_write = IsStoreInstruction(exception_pc);
+	// See the same guard in LnxHostSys.cpp: an instruction fetch fault reports
+	// the PC as the faulting address, so reading the instruction there would
+	// fault a second time inside the handler.
+	const bool is_write = (exception_address != exception_pc) && IsStoreInstruction(exception_pc);
 #endif
 
 	// Executing the handler concurrently from multiple threads wouldn't go down well.

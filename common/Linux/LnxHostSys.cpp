@@ -332,7 +332,12 @@ void PageFaultHandler::SignalHandler(int sig, siginfo_t* info, void* ctx)
 	const bool is_write = (static_cast<ucontext_t*>(ctx)->uc_mcontext.gregs[REG_ERR] & 2) != 0;
 #elif defined(ARCH_ARM64)
 	void* const exception_pc = reinterpret_cast<void*>(static_cast<ucontext_t*>(ctx)->uc_mcontext.pc);
-	const bool is_write = IsStoreInstruction(exception_pc);
+	// On an instruction fetch fault the reported address is the PC itself, and
+	// that page is by definition not readable - reading the instruction to
+	// classify it would fault again, this time inside the handler, which turns
+	// a plain crash into a double fault the crash dumper cannot even unwind.
+	// Such a fault is never ours to handle anyway.
+	const bool is_write = (exception_address != exception_pc) && IsStoreInstruction(exception_pc);
 #endif
 
 #elif defined(__FreeBSD__)

@@ -95,6 +95,8 @@ static bool WriteMinidump(HMODULE hDbgHelp, HANDLE hFile, HANDLE hProcess, DWORD
 static std::wstring s_write_directory;
 static DynamicLibrary s_dbghelp_module;
 static bool s_in_crash_handler = false;
+static LPTOP_LEVEL_EXCEPTION_FILTER s_previous_exception_filter = nullptr;
+static bool s_installed = false;
 
 static void GenerateCrashFilename(wchar_t* buf, size_t len, const wchar_t* prefix, const wchar_t* extension)
 {
@@ -171,8 +173,23 @@ bool CrashHandler::Install()
 	if (mod)
 		s_dbghelp_module.Adopt(mod);
 
-	SetUnhandledExceptionFilter(ExceptionHandler);
+	s_previous_exception_filter = SetUnhandledExceptionFilter(ExceptionHandler);
+	s_installed = true;
 	return true;
+}
+
+void CrashHandler::Uninstall()
+{
+	// The filter is process-wide and points into this module. A libretro core
+	// is unloaded while the frontend keeps running, so leaving it in place
+	// would both hand us the frontend's own crashes and, once the module is
+	// gone, leave the process filtering exceptions through freed code.
+	if (!s_installed)
+		return;
+
+	SetUnhandledExceptionFilter(s_previous_exception_filter);
+	s_previous_exception_filter = nullptr;
+	s_installed = false;
 }
 
 void CrashHandler::SetWriteDirectory(std::string_view dump_directory)
@@ -334,24 +351,53 @@ void CrashHandler::CrashSignalHandler(int signal, siginfo_t* siginfo, void* ctx)
 	std::abort();
 }
 
+static struct sigaction s_old_sigbus;
+static struct sigaction s_old_sigsegv;
+static bool s_installed = false;
+
 bool CrashHandler::Install()
 {
-	const std::string progpath = FileSystem::GetProgramPath();
-	s_backtrace_state = backtrace_create_state(progpath.empty() ? nullptr : progpath.c_str(), 0, nullptr, nullptr);
 	if (!s_backtrace_state)
-		return false;
+	{
+		// Created once per process: a libretro frontend can cycle
+		// retro_deinit/retro_init, and libbacktrace has no matching free.
+		const std::string progpath = FileSystem::GetProgramPath();
+		s_backtrace_state = backtrace_create_state(progpath.empty() ? nullptr : progpath.c_str(), 0, nullptr, nullptr);
+		if (!s_backtrace_state)
+			return false;
+	}
+
+	if (s_installed)
+		return true;
 
 	struct sigaction sa;
 
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = SA_SIGINFO | SA_NODEFER;
 	sa.sa_sigaction = CrashSignalHandler;
-	if (sigaction(SIGBUS, &sa, nullptr) != 0)
+	if (sigaction(SIGBUS, &sa, &s_old_sigbus) != 0)
 		return false;
-	if (sigaction(SIGSEGV, &sa, nullptr) != 0)
+	if (sigaction(SIGSEGV, &sa, &s_old_sigsegv) != 0)
 		return false;
 
+	s_installed = true;
 	return true;
+}
+
+void CrashHandler::Uninstall()
+{
+	// These are process-wide and point into this module. A libretro core is
+	// unloaded while the frontend keeps running, so leaving them in place
+	// would both hand us the frontend's own crashes and, once the module is
+	// gone, jump into freed code on the next one. Uninstall in the reverse
+	// order of installation: PageFaultHandler chains here, so it has to be
+	// taken down first (see retro_deinit).
+	if (!s_installed)
+		return;
+
+	sigaction(SIGBUS, &s_old_sigbus, nullptr);
+	sigaction(SIGSEGV, &s_old_sigsegv, nullptr);
+	s_installed = false;
 }
 
 void CrashHandler::SetWriteDirectory(std::string_view dump_directory)
@@ -368,6 +414,10 @@ void CrashHandler::WriteDumpForCaller()
 bool CrashHandler::Install()
 {
 	return false;
+}
+
+void CrashHandler::Uninstall()
+{
 }
 
 void CrashHandler::SetWriteDirectory(std::string_view dump_directory)

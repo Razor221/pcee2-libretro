@@ -1160,15 +1160,17 @@ void retro_get_system_av_info(struct retro_system_av_info* info)
 
 void retro_init(void)
 {
-	// Frontends cycle retro_deinit/retro_init; a second CrashHandler::Install
-	// would re-grab the SIGSEGV handler installed by the page fault handler
-	// and break the recompiler's fastmem fault handling.
-	static bool s_crash_handler_installed = false;
-	if (!s_crash_handler_installed)
+	// Both of these are idempotent, and retro_deinit takes them back down in
+	// the reverse order, so a frontend cycling retro_deinit/retro_init ends up
+	// with the same chain (page fault handler in front, crash handler behind
+	// it) rather than one clobbering the other.
+	CrashHandler::Install();
+
+	static bool s_atexit_registered = false;
+	if (!s_atexit_registered)
 	{
-		CrashHandler::Install();
 		std::atexit(&ShutdownCoreAtExit);
-		s_crash_handler_installed = true;
+		s_atexit_registered = true;
 	}
 
 	Log::SetHostOutputLevel(LOGLEVEL_INFO, &HostLogCallback);
@@ -1196,6 +1198,16 @@ void retro_deinit(void)
 			s_exit_requested = false;
 		}
 	}
+
+	// Hand the process' fault handling back to the frontend. Nothing of ours
+	// runs from here on, and the frontend unloads this module while it keeps
+	// going: a SIGSEGV/exception filter still pointing in here would report the
+	// frontend's own crashes as ours - writing a dump of an address space that
+	// was the size of a PS2 - and, after the unload, jump into freed code.
+	// Reverse order of retro_init: the page fault handler chains to the crash
+	// handler, so it has to be taken down first.
+	PageFaultHandler::Uninstall();
+	CrashHandler::Uninstall();
 }
 
 bool retro_load_game(const struct retro_game_info* game)
