@@ -105,10 +105,12 @@ static constexpr VkClearValue s_present_clear_color = {{{0.0f, 0.0f, 0.0f, 1.0f}
 // We need to synchronize instance creation because of adapter enumeration from the UI thread.
 static std::mutex s_instance_mutex;
 
-// Device extensions that are required for PCSX2.
-static constexpr const char* s_required_device_extensions[] = {
-	VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
-};
+// Device extensions that are required for PCSX2. VK_KHR_push_descriptor used to be
+// one of them, which rejected every GPU whose driver does not expose it - the Mali
+// in most Android handhelds - with a misleading "No physical devices found". It is
+// optional now: ProcessDeviceExtensions() decides whether to use it, and the texture
+// binding paths fall back to per-frame descriptor sets when it can't be used.
+static constexpr std::array<const char*, 0> s_required_device_extensions = {};
 
 GSDeviceVK::GSDeviceVK()
 {
@@ -438,6 +440,9 @@ bool GSDeviceVK::SelectDeviceExtensions(ExtensionList* extension_list, bool enab
 			return false;
 	}
 
+	// Optional as of the required-list change above; whether it is actually used is
+	// decided in ProcessDeviceExtensions().
+	m_optional_extensions.vk_khr_push_descriptor = SupportsExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, false);
 	m_optional_extensions.vk_ext_provoking_vertex = SupportsExtension(VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME, false);
 	m_optional_extensions.vk_ext_memory_budget = SupportsExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME, false);
 	m_optional_extensions.vk_ext_calibrated_timestamps =
@@ -817,18 +822,38 @@ bool GSDeviceVK::ProcessDeviceExtensions()
 
 	VkPhysicalDevicePushDescriptorPropertiesKHR push_descriptor_properties = {
 		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR};
-	Vulkan::AddPointerToChain(&properties2, &push_descriptor_properties);
+	if (m_optional_extensions.vk_khr_push_descriptor)
+		Vulkan::AddPointerToChain(&properties2, &push_descriptor_properties);
 
 	// query
 	vkGetPhysicalDeviceProperties2(m_physical_device, &properties2);
 
-	// confirm we actually support it
-	if (push_descriptor_properties.maxPushDescriptors < NUM_TFX_TEXTURES)
+	// Decide how textures get bound. Push descriptors are the fast path, but they are
+	// no longer a hard requirement: without them we allocate a descriptor set per draw
+	// out of a per-frame pool, which is what keeps GPUs like the Mali-G52 - whose driver
+	// does not expose the extension at all - running instead of failing to open the GS.
+	m_use_push_descriptors = m_optional_extensions.vk_khr_push_descriptor;
+	if (m_use_push_descriptors && push_descriptor_properties.maxPushDescriptors < NUM_TFX_TEXTURES)
 	{
-		Console.Error("VK: maxPushDescriptors (%u) is below required (%u)", push_descriptor_properties.maxPushDescriptors,
-			NUM_TFX_TEXTURES);
-		return false;
+		Console.Warning("VK: maxPushDescriptors (%u) is below required (%u), using descriptor sets instead.",
+			push_descriptor_properties.maxPushDescriptors, NUM_TFX_TEXTURES);
+		m_use_push_descriptors = false;
 	}
+	// Mali advertises the extension on newer drivers, but null-derefs inside
+	// vkCmdPushDescriptorSetKHR on the first textured draw, so never take that path there.
+	if (m_use_push_descriptors && properties2.properties.vendorID == 0x13B5u)
+	{
+		Console.Warning("VK: Mali GPU, not using push descriptors.");
+		m_use_push_descriptors = false;
+	}
+	// So the fallback can be exercised on hardware that does have the extension.
+	if (m_use_push_descriptors && std::getenv("PCEE2_NO_PUSH_DESCRIPTORS"))
+	{
+		Console.WriteLn("VK: PCEE2_NO_PUSH_DESCRIPTORS set, not using push descriptors.");
+		m_use_push_descriptors = false;
+	}
+	if (!m_use_push_descriptors)
+		Console.WriteLn("VK: Binding textures through per-frame descriptor sets.");
 
 	if (m_optional_extensions.vk_ext_line_rasterization && !line_rasterization_feature.bresenhamLines)
 	{
@@ -1003,6 +1028,31 @@ bool GSDeviceVK::CreateCommandBuffers()
 			return false;
 		}
 		Vulkan::SetObjectName(m_device, resources.fence, "Frame Fence %u", frame_index);
+
+		// Non-push-descriptor path: the texture sets for a frame come out of this pool,
+		// which is reset wholesale when the frame is recycled in ActivateCommandBuffer().
+		// Sized for a heavy frame; running out is handled by flushing (see
+		// AllocateDescriptorSetFromFramePool's callers) rather than by growing it.
+		if (!m_use_push_descriptors)
+		{
+			static constexpr u32 MAX_FRAME_TEXTURE_SETS = 8192;
+			static constexpr VkDescriptorPoolSize frame_pool_sizes[] = {
+				{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_FRAME_TEXTURE_SETS * 2},
+				{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, MAX_FRAME_TEXTURE_SETS * 3},
+				{VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, MAX_FRAME_TEXTURE_SETS * 2},
+				{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, MAX_FRAME_TEXTURE_SETS * 2},
+			};
+			const VkDescriptorPoolCreateInfo frame_pool_info = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr,
+				0, MAX_FRAME_TEXTURE_SETS, static_cast<u32>(std::size(frame_pool_sizes)), frame_pool_sizes};
+			res = vkCreateDescriptorPool(m_device, &frame_pool_info, nullptr, &resources.descriptor_pool);
+			if (res != VK_SUCCESS)
+			{
+				LOG_VULKAN_ERROR(res, "vkCreateDescriptorPool (frame) failed: ");
+				return false;
+			}
+			Vulkan::SetObjectName(m_device, resources.descriptor_pool, "Frame Texture Descriptor Pool %u", frame_index);
+		}
+
 		++frame_index;
 	}
 
@@ -1138,6 +1188,27 @@ VkDescriptorSet GSDeviceVK::AllocatePersistentDescriptorSet(VkDescriptorSetLayou
 		return VK_NULL_HANDLE;
 
 	return descriptor_set;
+}
+
+VkDescriptorSet GSDeviceVK::AllocateDescriptorSetFromFramePool(VkDescriptorSetLayout set_layout)
+{
+	const VkDescriptorPool pool = m_frame_resources[m_current_frame].descriptor_pool;
+	pxAssert(pool != VK_NULL_HANDLE);
+
+	const VkDescriptorSetAllocateInfo allocate_info = {
+		VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, pool, 1, &set_layout};
+
+	VkDescriptorSet descriptor_set;
+	const VkResult res = vkAllocateDescriptorSets(m_device, &allocate_info, &descriptor_set);
+	if (res == VK_SUCCESS)
+		return descriptor_set;
+
+	// Out of sets for this frame. We cannot flush from here: the caller is mid-way
+	// through building its binding state and holds a command buffer we would submit
+	// out from under it. Report it instead, and let the caller flush (which resets
+	// this pool), restart the render pass, and re-apply - the same shape as the
+	// uniform buffer overflow paths.
+	return VK_NULL_HANDLE;
 }
 
 void GSDeviceVK::FreePersistentDescriptorSet(VkDescriptorSet set)
@@ -1468,6 +1539,15 @@ void GSDeviceVK::ActivateCommandBuffer(u32 index)
 	res = vkResetCommandPool(m_device, resources.command_pool, 0);
 	if (res != VK_SUCCESS)
 		LOG_VULKAN_ERROR(res, "vkResetCommandPool failed: ");
+
+	// Same for the frame's texture descriptor sets on the non-push-descriptor path;
+	// the GPU is done with them, since we waited on this frame's fence above.
+	if (resources.descriptor_pool != VK_NULL_HANDLE)
+	{
+		res = vkResetDescriptorPool(m_device, resources.descriptor_pool, 0);
+		if (res != VK_SUCCESS)
+			LOG_VULKAN_ERROR(res, "vkResetDescriptorPool failed: ");
+	}
 
 	// Enable commands to be recorded to the two buffers again.
 	VkCommandBufferBeginInfo begin_info = {
@@ -4202,7 +4282,8 @@ bool GSDeviceVK::CreatePipelineLayouts()
 	// Convert Pipeline Layout
 	//////////////////////////////////////////////////////////////////////////
 
-	dslb.SetPushFlag();
+	if (m_use_push_descriptors)
+		dslb.SetPushFlag();
 	dslb.AddBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, NUM_UTILITY_SAMPLERS, VK_SHADER_STAGE_FRAGMENT_BIT);
 	if ((m_utility_ds_layout = dslb.Create(dev)) == VK_NULL_HANDLE)
 		return false;
@@ -4231,7 +4312,8 @@ bool GSDeviceVK::CreatePipelineLayouts()
 		return false;
 	Vulkan::SetObjectName(dev, m_tfx_ubo_ds_layout, "TFX UBO descriptor layout");
 
-	dslb.SetPushFlag();
+	if (m_use_push_descriptors)
+		dslb.SetPushFlag();
 	dslb.AddBinding(TFX_TEXTURE_TEXTURE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
 	dslb.AddBinding(TFX_TEXTURE_PALETTE, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
 	dslb.AddBinding(TFX_TEXTURE_RT,
@@ -4770,7 +4852,8 @@ bool GSDeviceVK::CompileCASPipelines()
 	Vulkan::DescriptorSetLayoutBuilder dslb;
 	Vulkan::PipelineLayoutBuilder plb;
 
-	dslb.SetPushFlag();
+	if (m_use_push_descriptors)
+		dslb.SetPushFlag();
 	dslb.AddBinding(0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
 	dslb.AddBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
 	if ((m_cas_ds_layout = dslb.Create(dev)) == VK_NULL_HANDLE)
@@ -4976,9 +5059,22 @@ bool GSDeviceVK::DoCAS(
 
 	// only happening once a frame, so the update isn't a huge deal.
 	Vulkan::DescriptorSetUpdateBuilder dsub;
-	dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, 0, sTexVK->GetView(), sTexVK->GetVkLayout());
-	dsub.AddStorageImageDescriptorWrite(VK_NULL_HANDLE, 1, dTexVK->GetView(), dTexVK->GetVkLayout());
-	dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, m_cas_pipeline_layout, 0, false);
+	if (m_use_push_descriptors)
+	{
+		dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, 0, sTexVK->GetView(), sTexVK->GetVkLayout());
+		dsub.AddStorageImageDescriptorWrite(VK_NULL_HANDLE, 1, dTexVK->GetView(), dTexVK->GetVkLayout());
+		dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, m_cas_pipeline_layout, 0, false);
+	}
+	else
+	{
+		const VkDescriptorSet ds = AllocateDescriptorSetFromFramePool(m_cas_ds_layout);
+		if (ds == VK_NULL_HANDLE) [[unlikely]]
+			return false; // one set per frame, after EndRenderPass - just skip the sharpening pass
+		dsub.AddImageDescriptorWrite(ds, 0, sTexVK->GetView(), sTexVK->GetVkLayout());
+		dsub.AddStorageImageDescriptorWrite(ds, 1, dTexVK->GetView(), dTexVK->GetVkLayout());
+		dsub.Update(m_device);
+		vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, m_cas_pipeline_layout, 0, 1, &ds, 0, nullptr);
+	}
 
 	// the actual meat and potatoes! only four commands.
 	static const int threadGroupWorkRegionDim = 16;
@@ -5115,6 +5211,8 @@ void GSDeviceVK::DestroyResources()
 		}
 		if (resources.command_pool != VK_NULL_HANDLE)
 			vkDestroyCommandPool(m_device, resources.command_pool, nullptr);
+		if (resources.descriptor_pool != VK_NULL_HANDLE)
+			vkDestroyDescriptorPool(m_device, resources.descriptor_pool, nullptr);
 	}
 
 	if (m_timestamp_query_pool != VK_NULL_HANDLE)
@@ -5977,15 +6075,39 @@ bool GSDeviceVK::ApplyTFXState(bool already_execed)
 
 	if (flags & DIRTY_FLAG_TFX_TEXTURES)
 	{
+		// Push descriptors keep the bindings we don't rewrite in command buffer state;
+		// a freshly allocated set starts empty, so on that path every binding the shader
+		// can read has to be written, not just the dirty ones. All m_tfx_textures[] slots
+		// are always valid (unused ones hold m_null_texture), so forcing the flags on is safe.
+		VkDescriptorSet ds = VK_NULL_HANDLE;
+		if (!m_use_push_descriptors)
+		{
+			flags |= DIRTY_FLAG_TFX_TEXTURES;
+			ds = AllocateDescriptorSetFromFramePool(m_tfx_texture_ds_layout);
+			if (ds == VK_NULL_HANDLE) [[unlikely]]
+			{
+				if (already_execed)
+				{
+					Console.Error("VK: Failed to allocate TFX texture descriptor set");
+					return false;
+				}
+
+				// Frame pool is full - flushing resets it. Restart the render pass and
+				// re-apply the whole state on the new command buffer.
+				ExecuteCommandBufferAndRestartRenderPass(false, "Out of TFX texture descriptors");
+				return ApplyTFXState(true);
+			}
+		}
+
 		if (flags & DIRTY_FLAG_TFX_TEXTURE_TEX)
 		{
-			dsub.AddCombinedImageSamplerDescriptorWrite(VK_NULL_HANDLE, TFX_TEXTURE_TEXTURE,
+			dsub.AddCombinedImageSamplerDescriptorWrite(ds, TFX_TEXTURE_TEXTURE,
 				m_tfx_textures[TFX_TEXTURE_TEXTURE]->GetView(), m_tfx_sampler,
 				m_tfx_textures[TFX_TEXTURE_TEXTURE]->GetVkLayout());
 		}
 		if (flags & DIRTY_FLAG_TFX_TEXTURE_PALETTE)
 		{
-			dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, TFX_TEXTURE_PALETTE,
+			dsub.AddImageDescriptorWrite(ds, TFX_TEXTURE_PALETTE,
 				m_tfx_textures[TFX_TEXTURE_PALETTE]->GetView(), m_tfx_textures[TFX_TEXTURE_PALETTE]->GetVkLayout());
 		}
 		if (flags & DIRTY_FLAG_TFX_TEXTURE_RT)
@@ -5993,17 +6115,17 @@ bool GSDeviceVK::ApplyTFXState(bool already_execed)
 			if (m_features.texture_barrier && !UseFeedbackLoopLayout())
 			{
 				dsub.AddInputAttachmentDescriptorWrite(
-					VK_NULL_HANDLE, TFX_TEXTURE_RT, m_tfx_textures[TFX_TEXTURE_RT]->GetView(), VK_IMAGE_LAYOUT_GENERAL);
+					ds, TFX_TEXTURE_RT, m_tfx_textures[TFX_TEXTURE_RT]->GetView(), VK_IMAGE_LAYOUT_GENERAL);
 			}
 			else
 			{
-				dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, TFX_TEXTURE_RT, m_tfx_textures[TFX_TEXTURE_RT]->GetView(),
+				dsub.AddImageDescriptorWrite(ds, TFX_TEXTURE_RT, m_tfx_textures[TFX_TEXTURE_RT]->GetView(),
 					m_tfx_textures[TFX_TEXTURE_RT]->GetVkLayout());
 			}
 		}
 		if (flags & DIRTY_FLAG_TFX_TEXTURE_PRIMID)
 		{
-			dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, TFX_TEXTURE_PRIMID,
+			dsub.AddImageDescriptorWrite(ds, TFX_TEXTURE_PRIMID,
 				m_tfx_textures[TFX_TEXTURE_PRIMID]->GetView(), m_tfx_textures[TFX_TEXTURE_PRIMID]->GetVkLayout());
 		}
 		if (flags & DIRTY_FLAG_TFX_TEXTURE_DEPTH)
@@ -6011,26 +6133,35 @@ bool GSDeviceVK::ApplyTFXState(bool already_execed)
 			if (m_features.texture_barrier && !UseFeedbackLoopLayout())
 			{
 				dsub.AddInputAttachmentDescriptorWrite(
-					VK_NULL_HANDLE, TFX_TEXTURE_DEPTH, m_tfx_textures[TFX_TEXTURE_DEPTH]->GetView(), VK_IMAGE_LAYOUT_GENERAL);
+					ds, TFX_TEXTURE_DEPTH, m_tfx_textures[TFX_TEXTURE_DEPTH]->GetView(), VK_IMAGE_LAYOUT_GENERAL);
 			}
 			else
 			{
-				dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, TFX_TEXTURE_DEPTH, m_tfx_textures[TFX_TEXTURE_DEPTH]->GetView(),
+				dsub.AddImageDescriptorWrite(ds, TFX_TEXTURE_DEPTH, m_tfx_textures[TFX_TEXTURE_DEPTH]->GetView(),
 					m_tfx_textures[TFX_TEXTURE_DEPTH]->GetVkLayout());
 			}
 		}
 		if (flags & DIRTY_FLAG_TFX_TEXTURE_RT_ROV)
 		{
-			dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, TFX_TEXTURE_RT_ROV, m_tfx_textures[TFX_TEXTURE_RT_ROV]->GetView(),
+			dsub.AddImageDescriptorWrite(ds, TFX_TEXTURE_RT_ROV, m_tfx_textures[TFX_TEXTURE_RT_ROV]->GetView(),
 				m_tfx_textures[TFX_TEXTURE_RT_ROV]->GetVkLayout(), true);
 		}
 		if (flags & DIRTY_FLAG_TFX_TEXTURE_DEPTH_ROV)
 		{
-			dsub.AddImageDescriptorWrite(VK_NULL_HANDLE, TFX_TEXTURE_DEPTH_ROV, m_tfx_textures[TFX_TEXTURE_DEPTH_ROV]->GetView(),
+			dsub.AddImageDescriptorWrite(ds, TFX_TEXTURE_DEPTH_ROV, m_tfx_textures[TFX_TEXTURE_DEPTH_ROV]->GetView(),
 				m_tfx_textures[TFX_TEXTURE_DEPTH_ROV]->GetVkLayout(), true);
 		}
 
-		dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout, TFX_DESCRIPTOR_SET_TEXTURES);
+		if (m_use_push_descriptors)
+		{
+			dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout, TFX_DESCRIPTOR_SET_TEXTURES);
+		}
+		else
+		{
+			dsub.Update(m_device);
+			vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tfx_pipeline_layout,
+				TFX_DESCRIPTOR_SET_TEXTURES, 1, &ds, 0, nullptr);
+		}
 	}
 
 	ApplyBaseState(flags, cmdbuf);
@@ -6051,9 +6182,32 @@ bool GSDeviceVK::ApplyUtilityState(bool already_execed)
 		m_current_pipeline_layout = PipelineLayout::Utility;
 
 		Vulkan::DescriptorSetUpdateBuilder dsub;
-		dsub.AddCombinedImageSamplerDescriptorWrite(
-			VK_NULL_HANDLE, 0, m_utility_texture->GetView(), m_utility_sampler, m_utility_texture->GetVkLayout());
-		dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_utility_pipeline_layout, 0, false);
+		if (m_use_push_descriptors)
+		{
+			dsub.AddCombinedImageSamplerDescriptorWrite(
+				VK_NULL_HANDLE, 0, m_utility_texture->GetView(), m_utility_sampler, m_utility_texture->GetVkLayout());
+			dsub.PushUpdate(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_utility_pipeline_layout, 0, false);
+		}
+		else
+		{
+			const VkDescriptorSet ds = AllocateDescriptorSetFromFramePool(m_utility_ds_layout);
+			if (ds == VK_NULL_HANDLE) [[unlikely]]
+			{
+				if (already_execed)
+				{
+					Console.Error("VK: Failed to allocate utility descriptor set");
+					return false;
+				}
+
+				ExecuteCommandBufferAndRestartRenderPass(false, "Out of utility descriptors");
+				return ApplyUtilityState(true);
+			}
+			dsub.AddCombinedImageSamplerDescriptorWrite(
+				ds, 0, m_utility_texture->GetView(), m_utility_sampler, m_utility_texture->GetVkLayout());
+			dsub.Update(m_device);
+			vkCmdBindDescriptorSets(
+				cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_utility_pipeline_layout, 0, 1, &ds, 0, nullptr);
+		}
 	}
 
 

@@ -47,6 +47,7 @@ public:
 		bool vk_khr_shader_non_semantic_info : 1;
 		bool vk_ext_attachment_feedback_loop_layout : 1;
 		bool vk_ext_fragment_shader_interlock : 1;
+		bool vk_khr_push_descriptor : 1;
 	};
 
 	// Global state accessors
@@ -85,6 +86,8 @@ public:
 
 	/// Returns true if running on a Qualcomm Adreno GPU (e.g. turnip/freedreno).
 	__fi bool IsDeviceAdreno() const { return (m_device_properties.vendorID == 0x5143); }
+	__fi bool IsDeviceMali() const { return (m_device_properties.vendorID == 0x13B5); }
+	__fi bool UsePushDescriptors() const { return m_use_push_descriptors; }
 
 	// Creates a simple render pass.
 	VkRenderPass GetRenderPass(VkFormat color_format, VkFormat depth_format,
@@ -107,6 +110,9 @@ public:
 
 	/// Allocates a descriptor set from the pool reserved for the current frame.
 	VkDescriptorSet AllocatePersistentDescriptorSet(VkDescriptorSetLayout set_layout);
+	// Non-push-descriptor path only. Returns VK_NULL_HANDLE when the frame's pool is
+	// exhausted; the caller has to flush (which resets it) and retry.
+	VkDescriptorSet AllocateDescriptorSetFromFramePool(VkDescriptorSetLayout set_layout);
 
 	/// Frees a descriptor set allocated from the global pool.
 	void FreePersistentDescriptorSet(VkDescriptorSet set);
@@ -226,6 +232,9 @@ private:
 		// [0] - Init (upload) command buffer, [1] - draw command buffer
 		VkCommandPool command_pool = VK_NULL_HANDLE;
 		std::array<VkCommandBuffer, 2> command_buffers{VK_NULL_HANDLE, VK_NULL_HANDLE};
+		// Texture descriptor sets for the frame, reset wholesale when the frame comes
+		// back around. Only created on the non-push-descriptor path.
+		VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
 		VkFence fence = VK_NULL_HANDLE;
 		u64 fence_counter = 0;
 		s32 spin_id = -1;
@@ -265,6 +274,10 @@ private:
 	VkCommandBuffer m_current_command_buffer = VK_NULL_HANDLE;
 
 	VkDescriptorPool m_global_descriptor_pool = VK_NULL_HANDLE;
+
+	// Whether TFX/utility/CAS textures are bound with VK_KHR_push_descriptor. Off when
+	// the extension is missing or unusable; see ProcessDeviceExtensions().
+	bool m_use_push_descriptors = true;
 
 	VkQueue m_graphics_queue = VK_NULL_HANDLE;
 	VkQueue m_present_queue = VK_NULL_HANDLE;
