@@ -1192,6 +1192,19 @@ void retro_deinit(void)
 			s_exit_requested = true;
 		}
 		s_session_cv.notify_all();
+
+		// The exit request is only looked at between sessions. If we are called
+		// without retro_unload_game() having wound one down, the CPU thread is
+		// parked in PumpMessagesOnCPUThread() waiting for a run token nobody is
+		// going to post, and the join below would wait on it forever. Break the
+		// pacing handshake too, so that park always has a way out.
+		s_running.store(false, std::memory_order_release);
+		{
+			std::unique_lock lock(s_frame_mutex);
+			s_run_token = true;
+		}
+		s_frame_cv.notify_all();
+
 		s_cpu_thread.join();
 		{
 			std::unique_lock lock(s_session_mutex);

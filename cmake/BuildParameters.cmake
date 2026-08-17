@@ -158,10 +158,21 @@ elseif("${PCSX2_TARGET_PROCESSOR}" STREQUAL "arm64" OR "${PCSX2_TARGET_PROCESSOR
 		list(APPEND PCSX2_DEFS OVERRIDE_HOST_CACHE_LINE_SIZE=${HOST_CACHE_LINE_SIZE})
 	endif()
 	
-	# Windows page/cache line size seems to match x68-64 
+	# Windows page/cache line size seems to match x68-64
 	if(WIN32)
 		list(APPEND PCSX2_DEFS OVERRIDE_HOST_PAGE_SIZE=0x1000)
 		# Value of std::hardware_destructive_interference_size for ARM64 on MSVC toolset 14.40.33807
+		list(APPEND PCSX2_DEFS OVERRIDE_HOST_CACHE_LINE_SIZE=64)
+	endif()
+
+	# Android is cross-compiled, so the probes above cannot run - they execute
+	# what they build. Cortex-A cores report 64 byte cache lines; the ARM64
+	# default of 128 is Apple's, and using it here only means every device logs
+	# "Cache line size mismatch" and pads its shared structures twice as far
+	# apart as it needs to. The page size is deliberately left alone: 16K page
+	# devices exist and VMManager copes with a host page smaller than the built
+	# one, not the other way around.
+	if(ANDROID)
 		list(APPEND PCSX2_DEFS OVERRIDE_HOST_CACHE_LINE_SIZE=64)
 	endif()
 else()
