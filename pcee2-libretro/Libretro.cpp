@@ -1780,8 +1780,23 @@ void retro_unload_game(void)
 
 void retro_reset(void)
 {
-	if (s_running.load(std::memory_order_acquire))
-		Host::RunOnCPUThread([]() { VMManager::Reset(); });
+	if (!s_running.load(std::memory_order_acquire))
+		return;
+
+	// Must block: VMManager::Reset() -> hwReset() tears down and recreates
+	// SPU2's output stream, which s_audio_stream just observes (see its
+	// declaration above - "owned by SPU2"). retro_run()'s OutputAudio() reads
+	// through that raw pointer on the frontend thread with no lock, safe only
+	// because the normal per-frame protocol keeps the CPU thread parked while
+	// it does. A fire-and-forget reset breaks that: the frontend thread is
+	// free to call retro_run() again immediately, and can dereference the
+	// stream mid-teardown - PullFrames() then reads/divides by fields of an
+	// object that's being destroyed or was just zeroed, which is exactly what
+	// crashed here (read AV or #DE depending on timing). Blocking until
+	// VMManager::Reset() fully completes guarantees the frontend can't call
+	// retro_run() again until SPU2 has already re-pointed s_audio_stream at a
+	// fresh, valid stream.
+	Host::RunOnCPUThread([]() { VMManager::Reset(); }, true);
 }
 
 // Translate libretro joypad/analog state into DualShock2 binds. Called at the
