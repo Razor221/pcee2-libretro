@@ -19,11 +19,8 @@ NPROCS="$(getconf _NPROCESSORS_ONLN)"
 CMAKE="${CMAKE:-cmake}"
 HOST="${HOST:-}"
 
-SDL=release-3.4.10
-FREETYPE=VER-2-14-3
-PLUTOVG=v1.3.2
-PLUTOSVG=v0.0.7
-RAPIDYAML=v0.12.1
+# Revisions live next door, so deps/CMakeLists.txt can build the same ones.
+. "$(cd "$(dirname "$0")" && pwd)/deps.versions"
 
 mkdir -p deps-build
 cd deps-build
@@ -82,25 +79,13 @@ clone https://github.com/biojppm/rapidyaml rapidyaml "$RAPIDYAML"
 "$CMAKE" --build rapidyaml/build --parallel "$NPROCS"
 "$CMAKE" --install rapidyaml/build
 
-clone https://github.com/ianlancetaylor/libbacktrace libbacktrace master
+clone https://github.com/ianlancetaylor/libbacktrace libbacktrace "$LIBBACKTRACE"
 (cd libbacktrace && ./configure --prefix="$PREFIX" --with-pic ${HOST:+--host="$HOST"} && make -j"$NPROCS" && make install)
 
 # shaderc: static combined, linked straight into the core. Distro
 # libshaderc_combined.a packages aren't actually self-contained (Ubuntu's
-# expects the system glslang), so build the real thing from source.
-SHADERC=v2026.3
-# glslang newer than the revision shaderc's DEPS pins. Between that revision and
-# this one glslang fixed a run of preprocessor memory-safety bugs (16-31 July
-# 2026), including 2eb8a581 "guard elseSeen/ifdepth against negative
-# elsetracker": once the preprocessor loses track of a conditional block it
-# writes backwards out of elseSeen into the allocation behind it and takes the
-# process down inside TShader::parse. That is what a Vulkan build of the core
-# hits on x86_64 while parsing GS/Renderers/Common's convert.glsl - all those
-# long "#elif !defined(...) && ..." chains - reported either as shaderc's
-# internal_error (the exception it catches) or as an outright SIGSEGV, so the
-# renderer never comes up and the user gets a black screen. aarch64 happens to
-# survive the same corruption, which is why this took a while to place.
-GLSLANG=90afccfbd49dff0349d86a41762e9de24e1df811
+# expects the system glslang), so build the real thing from source. The glslang
+# override that goes with it is explained in deps.versions.
 clone https://github.com/google/shaderc shaderc "$SHADERC"
 (cd shaderc && python3 utils/git-sync-deps)
 # git-sync-deps has just put DEPS' revision in place; move it forward. Fetching
@@ -126,14 +111,14 @@ cp -r shaderc/libshaderc/include/shaderc "$PREFIX/include/"
 # Set PCEE2_BUILD_PNG_ZSTD=1 to enable; off by default so the Ubuntu jobs, whose
 # system libs already satisfy the minimums, keep using those.
 if [ "${PCEE2_BUILD_PNG_ZSTD:-0}" = "1" ]; then
-	clone https://github.com/pnggroup/libpng libpng v1.6.43
+	clone https://github.com/pnggroup/libpng libpng "$LIBPNG_OPTIONAL"
 	"$CMAKE" -S libpng -B libpng/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
 		-DPNG_SHARED=OFF -DPNG_STATIC=ON -DPNG_TESTS=OFF -DPNG_TOOLS=OFF
 	"$CMAKE" --build libpng/build --parallel "$NPROCS"
 	"$CMAKE" --install libpng/build
 
-	clone https://github.com/facebook/zstd zstd v1.5.6
+	clone https://github.com/facebook/zstd zstd "$ZSTD"
 	"$CMAKE" -S zstd/build/cmake -B zstd/b -G Ninja -DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
 		-DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON \
@@ -150,7 +135,7 @@ fi
 #The Windows cross build gets its libjpeg-turbo from the HOST block below, which
 #has to build one regardless because MXE ships none, so skip this one there.
 if [ "${PCEE2_BUILD_JPEG:-0}" = "1" ] && [ -z "$HOST" ]; then
-	clone https://github.com/libjpeg-turbo/libjpeg-turbo libjpeg-turbo 3.1.3
+	clone https://github.com/libjpeg-turbo/libjpeg-turbo libjpeg-turbo "$JPEGTURBO"
 	"$CMAKE" -S libjpeg-turbo -B libjpeg-turbo/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
 		-DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_TURBOJPEG=OFF
@@ -166,14 +151,6 @@ fi
 # Guarded by HOST, which is only set for the Windows cross job, so the Linux
 # x64/aarch64 jobs keep using their apt copies and don't pay for these builds.
 if [ -n "$HOST" ]; then
-	ZLIB=v1.3.2
-	LIBPNG=v1.6.58
-	DXHEADERS=v1.618.2
-	JPEGTURBO=3.1.3
-	ZSTD=v1.5.6
-	LZ4=v1.10.0
-	WEBP=v1.6.0
-
 	clone https://github.com/madler/zlib zlib "$ZLIB"
 	"$CMAKE" -S zlib -B zlib/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \

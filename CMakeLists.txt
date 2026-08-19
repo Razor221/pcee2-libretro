@@ -51,6 +51,19 @@ if(MSVC AND ENABLE_LIBRETRO)
 	set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
+# Dependencies that the distribution does not package, or packages too old, can
+# be built here rather than by running pcee2-libretro/scripts/build-deps-*.sh
+# first (issue
+# #17). Has to run before SearchForStuff, which is where find_package() looks
+# for them.
+option(PCEE2_BUILD_DEPS "Build the from-source dependencies as part of this configure" OFF)
+option(PCEE2_SDL_STATIC "With PCEE2_BUILD_DEPS, link SDL3 statically into the core" ON)
+option(PCEE2_BUILD_PNG_ZSTD "With PCEE2_BUILD_DEPS, build libpng and zstd too" OFF)
+option(PCEE2_BUILD_JPEG "With PCEE2_BUILD_DEPS, build libjpeg-turbo too" OFF)
+if(PCEE2_BUILD_DEPS)
+	include(BuildDependencies)
+endif()
+
 include(SearchForStuff)
 
 # Must be done after SearchForStuff

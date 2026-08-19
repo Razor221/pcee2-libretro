@@ -1,0 +1,34 @@
+# Revisions of the dependencies built from source, shared by the shell scripts
+# and by deps/CMakeLists.txt so the two can never drift apart. Plain KEY=value,
+# unquoted: the scripts source this file, CMake parses it.
+
+SDL=release-3.4.10
+FREETYPE=VER-2-14-3
+PLUTOVG=v1.3.2
+PLUTOSVG=v0.0.7
+RAPIDYAML=v0.12.1
+LIBBACKTRACE=master
+
+SHADERC=v2026.3
+# glslang newer than the revision shaderc's DEPS pins. Between that revision and
+# this one glslang fixed a run of preprocessor memory-safety bugs (16-31 July
+# 2026), including 2eb8a581 "guard elseSeen/ifdepth against negative
+# elsetracker": once the preprocessor loses track of a conditional block it
+# writes backwards out of elseSeen into the allocation behind it and takes the
+# process down inside TShader::parse. That is what a Vulkan build of the core
+# hits on x86_64 while parsing GS/Renderers/Common's convert.glsl - all those
+# long "#elif !defined(...) && ..." chains - reported either as shaderc's
+# internal_error (the exception it catches) or as an outright SIGSEGV, so the
+# renderer never comes up and the user gets a black screen. aarch64 happens to
+# survive the same corruption, which is why this took a while to place.
+GLSLANG=90afccfbd49dff0349d86a41762e9de24e1df811
+
+# Optional, and for the Windows cross build.
+ZLIB=v1.3.2
+LIBPNG=v1.6.58
+LIBPNG_OPTIONAL=v1.6.43
+DXHEADERS=v1.618.2
+JPEGTURBO=3.1.3
+ZSTD=v1.5.6
+LZ4=v1.10.0
+WEBP=v1.6.0
