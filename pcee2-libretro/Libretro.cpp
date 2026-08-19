@@ -60,6 +60,7 @@
 #include "pcsx2/GS/Renderers/Vulkan/VKLibretro.h"
 #include "pcsx2/GS/Renderers/Vulkan/VKLoader.h"
 #include "pcsx2/MTGS.h"
+#include "pcsx2/MTVU.h"
 #include "pcsx2/MemoryTypes.h"
 #include "pcsx2/SIO/Pad/Pad.h"
 #include "pcsx2/SaveState.h"
@@ -1230,6 +1231,21 @@ void retro_deinit(void)
 			s_exit_requested = false;
 		}
 	}
+
+	// MTVU's VU1 thread is a second background thread the core owns, and
+	// nothing has joined it up to this point - the CPU thread above only ever
+	// waits on it (WaitVU()), it never closes it. Left alone, the only thing
+	// that would ever join it is VU_Thread's own destructor, and for the
+	// global `vu1Thread` that lives in this DLL, that destructor only runs at
+	// DLL_PROCESS_DETACH inside FreeLibrary() - under the loader lock. That is
+	// exactly the deadlock class this function was already patched to avoid
+	// for the CPU thread (see the pacing-handshake break above): a frontend
+	// that calls retro_deinit() and then unloads the module (which this one
+	// does, since we report SET_SUPPORT_NO_GAME false) joins the VU1 thread
+	// from within DllMain, and the VU1 thread's own exit can need that same
+	// lock to come back. Close it here instead, while we're still safely
+	// outside FreeLibrary().
+	vu1Thread.Close();
 
 	// Hand the process' fault handling back to the frontend. Nothing of ours
 	// runs from here on, and the frontend unloads this module while it keeps
