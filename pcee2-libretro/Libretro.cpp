@@ -208,7 +208,25 @@ namespace LibretroHost
 
 	// SPU2 output stream that the frontend pulls samples from in retro_run().
 	// Reads happen while the CPU thread is parked in PumpMessagesOnCPUThread(),
-	// and the ring buffer is SPSC-atomic anyway, so no extra locking is needed.
+	// and the ring buffer itself is SPSC-atomic, so no locking is needed for
+	// steady-state reads/writes against a live stream object.
+	//
+	// That assumption breaks around VMManager::Reset(): SPU2::CreateOutputStream()
+	// (called from hwReset() by way of SPU2::Reset() -> UpdateSampleRate(), or
+	// via ApplySettings()) does `s_output_stream.reset()` then constructs a
+	// brand new stream, and s_audio_stream is just an observer of whichever
+	// object SPU2 currently owns - it isn't updated until the new stream's
+	// constructor runs. Between those two points the old AudioStream is fully
+	// destroyed while s_audio_stream still points at it. retro_run() keeps
+	// getting called on its own schedule the whole time (nothing about
+	// retro_reset() pauses it), so OutputAudio() can - and did - dereference
+	// a freed stream via s_audio_stream mid-teardown. s_audio_stream_mutex
+	// closes that window: OutputAudio() holds it only for the quick
+	// PullFrames() call, and retro_reset() holds it for the full
+	// VMManager::Reset(), so the two can never overlap regardless of which
+	// thread ends up calling what.
+	static std::mutex s_audio_stream_mutex;
+
 	class LibretroAudioStream final : public AudioStream
 	{
 	public:
@@ -1783,20 +1801,26 @@ void retro_reset(void)
 	if (!s_running.load(std::memory_order_acquire))
 		return;
 
-	// Must block: VMManager::Reset() -> hwReset() tears down and recreates
-	// SPU2's output stream, which s_audio_stream just observes (see its
-	// declaration above - "owned by SPU2"). retro_run()'s OutputAudio() reads
-	// through that raw pointer on the frontend thread with no lock, safe only
-	// because the normal per-frame protocol keeps the CPU thread parked while
-	// it does. A fire-and-forget reset breaks that: the frontend thread is
-	// free to call retro_run() again immediately, and can dereference the
-	// stream mid-teardown - PullFrames() then reads/divides by fields of an
-	// object that's being destroyed or was just zeroed, which is exactly what
-	// crashed here (read AV or #DE depending on timing). Blocking until
-	// VMManager::Reset() fully completes guarantees the frontend can't call
-	// retro_run() again until SPU2 has already re-pointed s_audio_stream at a
-	// fresh, valid stream.
-	Host::RunOnCPUThread([]() { VMManager::Reset(); }, true);
+	// s_audio_stream_mutex (see its declaration, above OutputAudio()) is what
+	// actually keeps this safe: it's held for the whole of VMManager::Reset()
+	// here, and OutputAudio() takes the same lock before touching
+	// s_audio_stream, so the two can never run concurrently regardless of
+	// which thread calls retro_run() - and nothing in this codebase promises
+	// that's the same thread that's blocked below.
+	//
+	// block=true is also correct on its own merits (matches ChangeDiscIndex):
+	// it stops retro_reset() from returning - and therefore a second Reset()
+	// or a save-state op from being accepted - while one is still in flight.
+	// But block=true alone was tried first and did not fix the crash this
+	// comment used to describe: it only serializes *this* function against
+	// its own caller, and retro_run() is not called through retro_reset(), so
+	// nothing here was ever able to stop it from running at the same time.
+	Host::RunOnCPUThread(
+		[]() {
+			std::unique_lock lock(s_audio_stream_mutex);
+			VMManager::Reset();
+		},
+		true);
 }
 
 // Translate libretro joypad/analog state into DualShock2 binds. Called at the
@@ -1909,8 +1933,11 @@ static void OutputAudio()
 	static int16_t s16_buffer[MAX_AUDIO_FRAMES_PER_RUN * 2];
 
 	u32 frames = 0;
-	if (s_audio_stream)
-		frames = s_audio_stream->PullFrames(float_buffer, MAX_AUDIO_FRAMES_PER_RUN);
+	{
+		std::unique_lock lock(s_audio_stream_mutex);
+		if (s_audio_stream)
+			frames = s_audio_stream->PullFrames(float_buffer, MAX_AUDIO_FRAMES_PER_RUN);
+	}
 
 	if (frames == 0)
 	{
