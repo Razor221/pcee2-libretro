@@ -43,20 +43,14 @@ TOOLCHAIN=(
 	"-DCMAKE_BUILD_TYPE=Release"
 )
 
+# Shared with the Linux recipe and with deps/CMakeLists.txt, so a revision is
+# bumped in one place. The glslang override is explained there.
+. "$(cd "$(dirname "$0")" && pwd)/deps.versions"
+
+# The one revision this recipe does not share. Android has been built against
+# zlib 1.3.1 with nothing recorded about why, so it stays there rather than
+# moving as a side effect of picking up the shared list.
 ZLIB=v1.3.1
-LIBPNG=v1.6.58
-JPEGTURBO=3.1.3
-ZSTD=v1.5.6
-LZ4=v1.10.0
-WEBP=v1.6.0
-SDL=release-3.4.10
-FREETYPE=VER-2-14-3
-PLUTOVG=v1.3.2
-PLUTOSVG=v0.0.7
-RAPIDYAML=v0.12.1
-SHADERC=v2026.3
-# Same glslang bump as the Linux recipe; see build-deps-linux.sh for why.
-GLSLANG=90afccfbd49dff0349d86a41762e9de24e1df811
 
 mkdir -p deps-build
 cd deps-build
