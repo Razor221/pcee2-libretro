@@ -10,6 +10,8 @@ set(PCEE2_DEPS_PREFIX "${CMAKE_BINARY_DIR}/deps" CACHE PATH
 	"Where -DPCEE2_BUILD_DEPS=ON installs the dependencies it builds")
 set(PCEE2_DEPS_ARGS "" CACHE STRING
 	"Extra -D arguments for the dependency build (semicolon separated)")
+set(PCEE2_DEPS_JOBS "" CACHE STRING
+	"Parallel jobs to build each dependency with (default: as many as there are cores)")
 
 set(_deps_build "${CMAKE_BINARY_DIR}/deps-build")
 
@@ -21,6 +23,9 @@ set(_deps_args
 	-DPCEE2_BUILD_PNG_ZSTD=${PCEE2_BUILD_PNG_ZSTD}
 	-DPCEE2_BUILD_JPEG=${PCEE2_BUILD_JPEG}
 )
+if(PCEE2_DEPS_JOBS)
+	list(APPEND _deps_args -DNPROCS=${PCEE2_DEPS_JOBS})
+endif()
 foreach(_var CMAKE_TOOLCHAIN_FILE CMAKE_C_COMPILER CMAKE_CXX_COMPILER CMAKE_C_COMPILER_LAUNCHER
 		CMAKE_CXX_COMPILER_LAUNCHER CMAKE_SYSROOT CMAKE_OSX_DEPLOYMENT_TARGET CMAKE_OSX_ARCHITECTURES
 		ANDROID_ABI ANDROID_PLATFORM)

@@ -15,10 +15,14 @@ project(pcee2-deps NONE)
 include(ExternalProject)
 include(ProcessorCount)
 
-ProcessorCount(NPROCS)
-if(NPROCS EQUAL 0)
-	set(NPROCS 1)
+ProcessorCount(HOST_CORES)
+if(HOST_CORES EQUAL 0)
+	set(HOST_CORES 1)
 endif()
+# A knob rather than a constant: these are the heaviest C++ builds in the tree
+# (shaderc pulls in glslang and SPIRV-Tools), and a small board with 4 cores and
+# little RAM does better with fewer.
+set(NPROCS ${HOST_CORES} CACHE STRING "Parallel jobs to build each dependency with")
 
 # Revisions come from the file the shell scripts source, so there is one place
 # to change them. Plain KEY=value lines, comments start with #.
