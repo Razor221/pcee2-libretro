@@ -44,6 +44,7 @@
 
 #include "EmbeddedResources.h"
 #include "pcsx2/Achievements.h"
+#include "pcsx2/CDVD/CDVDcommon.h"
 #include "pcsx2/Config.h"
 #include "pcsx2/GS.h"
 #include "pcsx2/Host/AudioStream.h"
@@ -100,6 +101,23 @@ namespace LibretroHost
 	static bool s_boot_requested = false;
 	static bool s_exit_requested = false;
 	static bool s_session_active = false;
+
+	// Disc list behind the libretro disk control interface. Holds one entry for
+	// ordinary content and one per line for an m3u playlist; path is what the
+	// frontend is shown, boot_path what CDVD opens (a cue resolves to the file
+	// its data track lives in).
+	struct DiscImage
+	{
+		std::string path;
+		std::string boot_path;
+	};
+	static std::vector<DiscImage> s_discs;
+	static unsigned s_disc_index = 0;
+	static bool s_disc_ejected = false;
+	// Remembered across loads by the frontend, so a multi-disc game resumes on
+	// the disc it was left on.
+	static unsigned s_disc_initial_index = 0;
+	static std::string s_disc_initial_path;
 
 	// frame pacing: retro_run() posts a run token, CPU thread posts frame-done
 	static std::mutex s_frame_mutex;
@@ -1136,7 +1154,7 @@ void retro_get_system_info(struct retro_system_info* info)
 	std::memset(info, 0, sizeof(*info));
 	info->library_name = "PCEE2";
 	info->library_version = GIT_REV;
-	info->valid_extensions = "iso|chd|cue|cso|zso|gz|bin|mdf|nrg|elf|irx";
+	info->valid_extensions = "iso|chd|cue|m3u|cso|zso|gz|bin|mdf|nrg|elf|irx";
 	info->need_fullpath = true;
 	info->block_extract = true;
 }
@@ -1224,6 +1242,40 @@ void retro_deinit(void)
 	CrashHandler::Uninstall();
 }
 
+// Cue sheets and m3u playlists both name their files relative to themselves.
+// Composing "directory of the list" + "name in the list" is a guess: Redump
+// sheets routinely disagree with the file's actual case, which only bites on a
+// case-sensitive filesystem, and a frontend serving the list over Android's
+// SAF hands us a path whose siblings we cannot spell at all. So fall back to
+// the directory listing and match without regard to case - FindFiles() goes
+// through the same VFS hooks that read the list, so wherever the list itself
+// could be opened, the files it names can be found.
+static std::string ResolveSiblingFile(const std::string_view dir, const std::string_view name)
+{
+	// Lists authored on Windows spell the separator as a backslash, which is a
+	// path separator nowhere else.
+	std::string relative(name);
+	std::replace(relative.begin(), relative.end(), '\\', '/');
+
+	std::string path = Path::IsAbsolute(relative) ? relative : Path::Combine(dir, relative);
+	if (FileSystem::FileExists(path.c_str()))
+		return path;
+
+	const std::string_view wanted = Path::GetFileName(relative);
+	FileSystem::FindResultsArray results;
+	if (FileSystem::FindFiles(std::string(dir).c_str(), "*", FILESYSTEM_FIND_FILES, &results))
+	{
+		for (const FILESYSTEM_FIND_DATA& fd : results)
+		{
+			if (StringUtil::compareNoCase(Path::GetFileName(fd.FileName), wanted))
+				return fd.FileName;
+		}
+	}
+
+	// Nothing matched - hand back the composed path so the caller can name it.
+	return path;
+}
+
 // Redump dumps the PS2's CD-ROM titles - and most demo discs - as a cue sheet
 // plus one or more binary tracks, so that is what a lot of libraries hold.
 // CDVD has no cue parser (it opens the image directly, auto-detecting 2048,
@@ -1277,37 +1329,7 @@ static std::string ResolveCueSheet(const std::string& cue_path)
 		return {};
 	}
 
-	// Track files are named relative to the sheet. Sheets authored on Windows
-	// spell that with backslashes, which is a path separator nowhere else.
-	std::string track_name(chosen);
-	std::replace(track_name.begin(), track_name.end(), '\\', '/');
-
-	const std::string_view cue_dir = Path::GetDirectory(cue_path);
-	std::string path = Path::Combine(cue_dir, track_name);
-	if (!FileSystem::FileExists(path.c_str()))
-	{
-		// Composing the sibling path is a guess: Redump sheets routinely
-		// disagree with the file's actual case, which only bites on a
-		// case-sensitive filesystem, and a frontend serving the cue over SAF
-		// hands us a path whose siblings we cannot spell at all. Ask for the
-		// directory listing instead - FindFiles() goes through the same VFS
-		// hooks that opened the sheet, so wherever the cue could be read, its
-		// tracks can be found.
-		const std::string_view wanted = Path::GetFileName(track_name);
-		FileSystem::FindResultsArray results;
-		if (FileSystem::FindFiles(std::string(cue_dir).c_str(), "*", FILESYSTEM_FIND_FILES, &results))
-		{
-			for (const FILESYSTEM_FIND_DATA& fd : results)
-			{
-				if (StringUtil::compareNoCase(Path::GetFileName(fd.FileName), wanted))
-				{
-					path = fd.FileName;
-					break;
-				}
-			}
-		}
-	}
-
+	const std::string path = ResolveSiblingFile(Path::GetDirectory(cue_path), chosen);
 	if (!FileSystem::FileExists(path.c_str()))
 	{
 		Console.Error(fmt::format("Cue sheet '{}' points at '{}', which does not exist.", cue_path, path));
@@ -1330,6 +1352,251 @@ static std::string ResolveContentPath(const char* path)
 	}
 
 	return path;
+}
+
+// ---------------------------------------------------------------- disc list
+//
+// Multi-disc games are shipped as an m3u playlist naming one image per line.
+// RetroArch can expand those itself through add_image_index/replace_image_index,
+// but only for a core that offers the disk control interface, and a playlist
+// handed straight to the core has to work too - so parse it here and let the
+// same list serve both.
+
+// One image path per line, relative to the playlist. Blank lines are skipped,
+// and so are comments, which is where RetroArch keeps its own #EXTM3U tags.
+static std::vector<std::string> ParseM3U(const std::string& m3u_path)
+{
+	std::vector<std::string> entries;
+
+	const std::optional<std::string> list = FileSystem::ReadFileToString(m3u_path.c_str());
+	if (!list.has_value())
+	{
+		Console.Error(fmt::format("Failed to read playlist '{}'.", m3u_path));
+		return entries;
+	}
+
+	const std::string_view dir = Path::GetDirectory(m3u_path);
+	for (const std::string_view line : StringUtil::SplitString(list.value(), '\n'))
+	{
+		const std::string_view trimmed = StringUtil::StripWhitespace(line);
+		if (trimmed.empty() || trimmed.front() == '#')
+			continue;
+
+		std::string path = ResolveSiblingFile(dir, trimmed);
+		if (!FileSystem::FileExists(path.c_str()))
+		{
+			Console.Error(fmt::format("Playlist '{}' names '{}', which does not exist - skipping it.", m3u_path, path));
+			continue;
+		}
+
+		entries.push_back(std::move(path));
+	}
+
+	return entries;
+}
+
+// Swaps the disc in a running VM. ChangeDisc() drives the tray state the game
+// watches for a media change, so one call per swap is the whole story.
+static bool InsertDisc(unsigned index)
+{
+	if (index >= s_discs.size())
+		return false;
+
+	// Nothing is booted yet during retro_load_game - the index picked there is
+	// what boots, and there is no VM to swap under.
+	if (!s_running.load(std::memory_order_acquire) || !VMManager::HasValidVM())
+		return true;
+
+	const std::string path = s_discs[index].boot_path;
+	bool changed = false;
+	Host::RunOnCPUThread([&changed, &path]() { changed = VMManager::ChangeDisc(CDVD_SourceType::Iso, path); }, true);
+	return changed;
+}
+
+static bool DiskSetEjectState(bool ejected)
+{
+	if (s_discs.empty())
+		return false;
+
+	if (ejected == s_disc_ejected)
+		return true;
+
+	s_disc_ejected = ejected;
+
+	// Closing the tray is where the swap happens. Opening it is left alone on
+	// purpose: ChangeDisc() already opens and closes the tray for the guest, so
+	// removing the disc here as well would show it two media changes for one.
+	return ejected ? true : InsertDisc(s_disc_index);
+}
+
+static bool DiskGetEjectState()
+{
+	return s_disc_ejected;
+}
+
+static unsigned DiskGetImageIndex()
+{
+	return s_disc_index;
+}
+
+static bool DiskSetImageIndex(unsigned index)
+{
+	if (index >= s_discs.size())
+		return false;
+
+	s_disc_index = index;
+
+	// The frontend ejects, picks, then closes, and the disc goes in on close.
+	// Should it pick with the tray shut, honour that straight away.
+	return s_disc_ejected ? true : InsertDisc(index);
+}
+
+static unsigned DiskGetNumImages()
+{
+	return static_cast<unsigned>(s_discs.size());
+}
+
+static bool DiskReplaceImageIndex(unsigned index, const struct retro_game_info* info)
+{
+	if (index >= s_discs.size())
+		return false;
+
+	// A null info means "drop this entry", which is how a frontend shortens the
+	// list it built with add_image_index.
+	if (!info || !info->path)
+	{
+		s_discs.erase(s_discs.begin() + index);
+		if (s_disc_index >= s_discs.size() && !s_discs.empty())
+			s_disc_index = static_cast<unsigned>(s_discs.size() - 1);
+		return true;
+	}
+
+	s_discs[index].path = info->path;
+	s_discs[index].boot_path = ResolveContentPath(info->path);
+	return true;
+}
+
+static bool DiskAddImageIndex()
+{
+	s_discs.emplace_back();
+	return true;
+}
+
+// Called before retro_load_game with the disc the frontend last had inserted.
+static bool DiskSetInitialImage(unsigned index, const char* path)
+{
+	s_disc_initial_index = index;
+	s_disc_initial_path = path ? path : "";
+	return true;
+}
+
+static bool CopyOut(std::string_view text, char* s, size_t len)
+{
+	if (!s || len == 0)
+		return false;
+
+	const size_t count = std::min(text.size(), len - 1);
+	std::memcpy(s, text.data(), count);
+	s[count] = 0;
+	return true;
+}
+
+static bool DiskGetImagePath(unsigned index, char* s, size_t len)
+{
+	if (index >= s_discs.size())
+		return false;
+
+	return CopyOut(s_discs[index].path, s, len);
+}
+
+static bool DiskGetImageLabel(unsigned index, char* s, size_t len)
+{
+	if (index >= s_discs.size())
+		return false;
+
+	// The file name without its extension - "Game (Disc 2)" reads better in the
+	// disc menu than the whole path does.
+	return CopyOut(Path::GetFileTitle(s_discs[index].path), s, len);
+}
+
+static void RegisterDiskControl()
+{
+	static const struct retro_disk_control_ext_callback ext = {
+		&DiskSetEjectState,
+		&DiskGetEjectState,
+		&DiskGetImageIndex,
+		&DiskSetImageIndex,
+		&DiskGetNumImages,
+		&DiskReplaceImageIndex,
+		&DiskAddImageIndex,
+		&DiskSetInitialImage,
+		&DiskGetImagePath,
+		&DiskGetImageLabel,
+	};
+	if (s_environ_cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, (void*)&ext))
+		return;
+
+	// Pre-1.7.6 frontends only know the original interface, which has no labels
+	// and cannot restore the disc that was in the drive last time.
+	static const struct retro_disk_control_callback legacy = {
+		&DiskSetEjectState,
+		&DiskGetEjectState,
+		&DiskGetImageIndex,
+		&DiskSetImageIndex,
+		&DiskGetNumImages,
+		&DiskReplaceImageIndex,
+		&DiskAddImageIndex,
+	};
+	s_environ_cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, (void*)&legacy);
+}
+
+// Fills the disc list from whatever the frontend loaded and returns the image
+// to boot, or an empty string if there is nothing bootable in it.
+static std::string BuildDiscList(const char* content_path)
+{
+	s_discs.clear();
+	s_disc_index = 0;
+	s_disc_ejected = false;
+
+	if (StringUtil::compareNoCase(Path::GetExtension(content_path), "m3u"))
+	{
+		for (std::string& entry : ParseM3U(content_path))
+		{
+			DiscImage disc;
+			disc.boot_path = ResolveContentPath(entry.c_str());
+			disc.path = std::move(entry);
+			s_discs.push_back(std::move(disc));
+		}
+
+		if (s_discs.empty())
+		{
+			Console.Error(fmt::format("Playlist '{}' holds no usable image.", content_path));
+			return {};
+		}
+
+		// Restore the disc the frontend had inserted when it last ran this
+		// playlist. The path is checked because the list may have been edited
+		// since, in which case the index means something else now.
+		if (s_disc_initial_index < s_discs.size() &&
+			(s_disc_initial_path.empty() || s_disc_initial_path == s_discs[s_disc_initial_index].path))
+		{
+			s_disc_index = s_disc_initial_index;
+		}
+
+		Console.WriteLnFmt("Playlist '{}': {} disc(s), booting #{} ('{}').", content_path, s_discs.size(),
+			s_disc_index + 1, s_discs[s_disc_index].path);
+	}
+	else
+	{
+		// Single image, but still offered through the disk control interface:
+		// that is what lets a frontend build its own playlist on top of it.
+		DiscImage disc;
+		disc.path = content_path;
+		disc.boot_path = ResolveContentPath(content_path);
+		s_discs.push_back(std::move(disc));
+	}
+
+	return s_discs[s_disc_index].boot_path;
 }
 
 bool retro_load_game(const struct retro_game_info* game)
@@ -1404,7 +1671,11 @@ bool retro_load_game(const struct retro_game_info* game)
 	s_environ_cb(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE, &s_rumble_interface);
 
 	s_boot_params = VMBootParameters();
-	s_boot_params.filename = ResolveContentPath(game->path);
+	s_boot_params.filename = BuildDiscList(game->path);
+	if (s_boot_params.filename.empty())
+		return false;
+
+	RegisterDiskControl();
 
 	{
 		std::unique_lock lock(s_frame_mutex);
