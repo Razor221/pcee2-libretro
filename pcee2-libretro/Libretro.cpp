@@ -1013,8 +1013,40 @@ void LibretroHost::CPUThreadMain()
 				VMManager::SetState(VMState::Running);
 				// the frontend paces us through retro_run(); never wall-clock throttle
 				VMManager::SetLimiterMode(LimiterModeType::Unlimited);
-				while (VMManager::GetState() == VMState::Running && s_running.load(std::memory_order_acquire))
+				while (s_running.load(std::memory_order_acquire))
+				{
+					const VMState state = VMManager::GetState();
+					if (state == VMState::Resetting)
+					{
+						// retro_reset() (via Host::RunOnCPUThread) already called
+						// VMManager::Reset() once to get here - that call only
+						// flagged VMState::Resetting and returned, because it ran
+						// while state was Running (see VMManager::Reset()'s own
+						// comment: it exits the rec's tight execution loop first,
+						// then expects to be called again to do the real work).
+						// Calling it again now, with state == Resetting, bypasses
+						// that early-out and actually runs hwReset()/SPU2::Reset()/
+						// etc., ending by flipping state back to Running - exactly
+						// the pattern every other PCSX2 frontend's main loop uses
+						// (see QtHost's `case VMState::Resetting: VMManager::Reset();`).
+						// Without this case here, this loop's condition just saw a
+						// non-Running state and fell through to VMManager::Shutdown()
+						// below - i.e. "Reštart" silently tore the whole VM down
+						// instead of resetting it, out from under retro_run() still
+						// being called every frame by the frontend. This is also why
+						// the lock has to be here and not in retro_reset(): this is
+						// where SPU2's output stream is actually torn down and
+						// recreated, not there.
+						std::unique_lock lock(s_audio_stream_mutex);
+						VMManager::Reset();
+						continue;
+					}
+
+					if (state != VMState::Running)
+						break;
+
 					VMManager::Execute();
+				}
 				VMManager::Shutdown(false);
 			}
 			else
@@ -1801,26 +1833,26 @@ void retro_reset(void)
 	if (!s_running.load(std::memory_order_acquire))
 		return;
 
-	// s_audio_stream_mutex (see its declaration, above OutputAudio()) is what
-	// actually keeps this safe: it's held for the whole of VMManager::Reset()
-	// here, and OutputAudio() takes the same lock before touching
-	// s_audio_stream, so the two can never run concurrently regardless of
-	// which thread calls retro_run() - and nothing in this codebase promises
-	// that's the same thread that's blocked below.
+	// VMManager::Reset() only *requests* a reset from here: called while the
+	// VM is Running (always, since this can only run against a live session),
+	// it just flags VMState::Resetting and returns immediately - see its own
+	// comment ("we tell the rec to exit execution, _then_ reset"). The actual
+	// reset (hwReset(), SPU2::Reset(), ...) only happens once something calls
+	// VMManager::Reset() again while state == Resetting; every other PCSX2
+	// frontend's main loop has a case for that (see QtHost's `case
+	// VMState::Resetting: VMManager::Reset(); continue;`) and drives the real
+	// reset from there. CPUThreadMain() below does the same now - that's
+	// also where s_audio_stream_mutex actually needs to be held (see its
+	// declaration, above OutputAudio()), not here: locking around *this*
+	// call only serializes the flag-set against its own caller, and the real
+	// teardown/rebuild of the audio stream happens later, back in
+	// CPUThreadMain(), on the CPU thread's own schedule.
 	//
-	// block=true is also correct on its own merits (matches ChangeDiscIndex):
-	// it stops retro_reset() from returning - and therefore a second Reset()
-	// or a save-state op from being accepted - while one is still in flight.
-	// But block=true alone was tried first and did not fix the crash this
-	// comment used to describe: it only serializes *this* function against
-	// its own caller, and retro_run() is not called through retro_reset(), so
-	// nothing here was ever able to stop it from running at the same time.
-	Host::RunOnCPUThread(
-		[]() {
-			std::unique_lock lock(s_audio_stream_mutex);
-			VMManager::Reset();
-		},
-		true);
+	// block=true still matters on its own merits (matches ChangeDiscIndex):
+	// it stops retro_reset() from returning - and a second reset or a
+	// save-state op from being accepted - before the request has even been
+	// queued.
+	Host::RunOnCPUThread([]() { VMManager::Reset(); }, true);
 }
 
 // Translate libretro joypad/analog state into DualShock2 binds. Called at the
