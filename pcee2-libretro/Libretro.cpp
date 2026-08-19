@@ -278,6 +278,8 @@ namespace LibretroHost
 	{
 		std::unique_ptr<LibretroAudioStream> stream = std::make_unique<LibretroAudioStream>(sample_rate, parameters);
 		stream->Initialize();
+		INFO_LOG("DIAG CreateLibretroAudioStream: old s_audio_stream={} new={} rate={}", static_cast<void*>(s_audio_stream),
+			static_cast<void*>(stream.get()), sample_rate);
 		s_audio_stream = stream.get();
 		s_audio_sample_rate.store(sample_rate, std::memory_order_release);
 		return stream;
@@ -1815,12 +1817,19 @@ void retro_reset(void)
 	// comment used to describe: it only serializes *this* function against
 	// its own caller, and retro_run() is not called through retro_reset(), so
 	// nothing here was ever able to stop it from running at the same time.
+	INFO_LOG("DIAG retro_reset: entering, s_cpu_thread_id-matches={}", std::this_thread::get_id() == s_cpu_thread_id);
 	Host::RunOnCPUThread(
 		[]() {
+			INFO_LOG("DIAG retro_reset lambda: about to lock, s_audio_stream={}", static_cast<void*>(s_audio_stream));
 			std::unique_lock lock(s_audio_stream_mutex);
+			INFO_LOG("DIAG retro_reset lambda: locked, calling VMManager::Reset()");
 			VMManager::Reset();
+			INFO_LOG("DIAG retro_reset lambda: VMManager::Reset() returned, s_audio_stream={}",
+				static_cast<void*>(s_audio_stream));
 		},
 		true);
+	INFO_LOG("DIAG retro_reset: Host::RunOnCPUThread(block=true) returned, s_audio_stream={}",
+		static_cast<void*>(s_audio_stream));
 }
 
 // Translate libretro joypad/analog state into DualShock2 binds. Called at the
@@ -1935,6 +1944,12 @@ static void OutputAudio()
 	u32 frames = 0;
 	{
 		std::unique_lock lock(s_audio_stream_mutex);
+		static void* s_diag_last_ptr = reinterpret_cast<void*>(1); // != nullptr and != any real pointer we'll see first call
+		if (static_cast<void*>(s_audio_stream) != s_diag_last_ptr)
+		{
+			INFO_LOG("DIAG OutputAudio: s_audio_stream changed {} -> {}", s_diag_last_ptr, static_cast<void*>(s_audio_stream));
+			s_diag_last_ptr = static_cast<void*>(s_audio_stream);
+		}
 		if (s_audio_stream)
 			frames = s_audio_stream->PullFrames(float_buffer, MAX_AUDIO_FRAMES_PER_RUN);
 	}
