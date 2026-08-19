@@ -16,6 +16,7 @@
 // v1 scope: software renderer + MTGS::SaveMemorySnapshot readback,
 // null audio output, no pad input, no savestates. Enough to boot and render.
 
+#include <algorithm>
 #include <atomic>
 #include <bit>
 #include <chrono>
@@ -1276,8 +1277,37 @@ static std::string ResolveCueSheet(const std::string& cue_path)
 		return {};
 	}
 
-	// Track files are named relative to the sheet.
-	std::string path = Path::Combine(Path::GetDirectory(cue_path), chosen);
+	// Track files are named relative to the sheet. Sheets authored on Windows
+	// spell that with backslashes, which is a path separator nowhere else.
+	std::string track_name(chosen);
+	std::replace(track_name.begin(), track_name.end(), '\\', '/');
+
+	const std::string_view cue_dir = Path::GetDirectory(cue_path);
+	std::string path = Path::Combine(cue_dir, track_name);
+	if (!FileSystem::FileExists(path.c_str()))
+	{
+		// Composing the sibling path is a guess: Redump sheets routinely
+		// disagree with the file's actual case, which only bites on a
+		// case-sensitive filesystem, and a frontend serving the cue over SAF
+		// hands us a path whose siblings we cannot spell at all. Ask for the
+		// directory listing instead - FindFiles() goes through the same VFS
+		// hooks that opened the sheet, so wherever the cue could be read, its
+		// tracks can be found.
+		const std::string_view wanted = Path::GetFileName(track_name);
+		FileSystem::FindResultsArray results;
+		if (FileSystem::FindFiles(std::string(cue_dir).c_str(), "*", FILESYSTEM_FIND_FILES, &results))
+		{
+			for (const FILESYSTEM_FIND_DATA& fd : results)
+			{
+				if (StringUtil::compareNoCase(Path::GetFileName(fd.FileName), wanted))
+				{
+					path = fd.FileName;
+					break;
+				}
+			}
+		}
+	}
+
 	if (!FileSystem::FileExists(path.c_str()))
 	{
 		Console.Error(fmt::format("Cue sheet '{}' points at '{}', which does not exist.", cue_path, path));
