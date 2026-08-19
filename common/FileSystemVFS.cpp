@@ -463,10 +463,19 @@ bool FileSystem::VFS::UnmapWholeFile(std::span<const u8> span)
 	return (s_mapped_files.erase(span.data()) > 0);
 }
 
+// Whether the caller needs the byte count to be right, or only the existence
+// and directory bits out of the stat. Getting the size right can cost an extra
+// open, so it is asked for rather than assumed.
+enum class SizeAccuracy
+{
+	AsReported,
+	Exact,
+};
+
 // Fills in a stat block from what the frontend can tell us. It has no notion of
 // timestamps, so those stay zero: callers use them for cache freshness at
 // worst, never for correctness.
-static std::optional<bool> StatPathInternal(const char* path, FILESYSTEM_STAT_DATA* sd)
+static std::optional<bool> StatPathInternal(const char* path, FILESYSTEM_STAT_DATA* sd, SizeAccuracy accuracy)
 {
 	s64 size = 0;
 	int flags;
@@ -492,10 +501,11 @@ static std::optional<bool> StatPathInternal(const char* path, FILESYSTEM_STAT_DA
 	if (!(flags & (VFS_STAT_IS_DIRECTORY | VFS_STAT_IS_CHARACTER_SPECIAL)))
 	{
 		// The v3 stat only carries a 32-bit size, and PS2 media routinely goes
-		// past that, so a size that came back negative or near the 32-bit
-		// ceiling - i.e. one that could have been truncated - is re-read from
-		// an actual handle instead.
-		if (!s_hooks->stat_64 && (size < 0 || size >= 0x7FFFF000) && s_hooks->size)
+		// past that. A truncated size cannot be recognised by looking at it -
+		// a 5 GB image comes back as a perfectly ordinary-looking 705 MB - so
+		// whenever the number has to be right, take it from a handle, where
+		// the interface is 64-bit.
+		if (accuracy == SizeAccuracy::Exact && !s_hooks->stat_64 && s_hooks->size)
 		{
 			if (void* handle = s_hooks->open(path, VFS_ACCESS_READ, VFS_HINT_NONE))
 			{
@@ -517,7 +527,7 @@ std::optional<bool> FileSystem::VFS::StatPath(const char* path, FILESYSTEM_STAT_
 	if (!HasPathOps() || path[0] == '\0')
 		return std::nullopt;
 
-	return StatPathInternal(path, sd);
+	return StatPathInternal(path, sd, SizeAccuracy::Exact);
 }
 
 std::optional<bool> FileSystem::VFS::FileExists(const char* path)
@@ -525,8 +535,9 @@ std::optional<bool> FileSystem::VFS::FileExists(const char* path)
 	if (!HasPathOps() || path[0] == '\0')
 		return std::nullopt;
 
+	// Only the directory bit is read below, so the size need not be paid for.
 	FILESYSTEM_STAT_DATA sd;
-	if (!StatPathInternal(path, &sd).value_or(false))
+	if (!StatPathInternal(path, &sd, SizeAccuracy::AsReported).value_or(false))
 		return false;
 
 	return (sd.Attributes & FILESYSTEM_FILE_ATTRIBUTE_DIRECTORY) == 0;
@@ -537,8 +548,9 @@ std::optional<bool> FileSystem::VFS::DirectoryExists(const char* path)
 	if (!HasPathOps() || path[0] == '\0')
 		return std::nullopt;
 
+	// Same as FileExists(): the size is never looked at.
 	FILESYSTEM_STAT_DATA sd;
-	if (!StatPathInternal(path, &sd).value_or(false))
+	if (!StatPathInternal(path, &sd, SizeAccuracy::AsReported).value_or(false))
 		return false;
 
 	return (sd.Attributes & FILESYSTEM_FILE_ATTRIBUTE_DIRECTORY) != 0;
@@ -697,8 +709,13 @@ static u32 RecursiveFindFilesVFS(const std::string& origin_path, const std::stri
 			if (!(flags & FILESYSTEM_FIND_FILES))
 				continue;
 
+			// Whatever the frontend says, without opening every entry to check
+			// it: the sizes out of a listing are read for memory cards and
+			// BIOS images, both orders of magnitude below the 32-bit ceiling,
+			// and a directory of a few hundred files would otherwise cost that
+			// many opens.
 			FILESYSTEM_STAT_DATA sd;
-			if (StatPathInternal(full_path.c_str(), &sd).value_or(false))
+			if (StatPathInternal(full_path.c_str(), &sd, SizeAccuracy::AsReported).value_or(false))
 			{
 				out_data.Size = sd.Size;
 				out_data.CreationTime = sd.CreationTime;
