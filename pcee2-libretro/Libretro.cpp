@@ -60,6 +60,7 @@
 #include "pcsx2/GS/Renderers/Vulkan/VKLibretro.h"
 #include "pcsx2/GS/Renderers/Vulkan/VKLoader.h"
 #include "pcsx2/MTGS.h"
+#include "pcsx2/MTVU.h"
 #include "pcsx2/MemoryTypes.h"
 #include "pcsx2/SIO/Pad/Pad.h"
 #include "pcsx2/SaveState.h"
@@ -207,7 +208,25 @@ namespace LibretroHost
 
 	// SPU2 output stream that the frontend pulls samples from in retro_run().
 	// Reads happen while the CPU thread is parked in PumpMessagesOnCPUThread(),
-	// and the ring buffer is SPSC-atomic anyway, so no extra locking is needed.
+	// and the ring buffer itself is SPSC-atomic, so no locking is needed for
+	// steady-state reads/writes against a live stream object.
+	//
+	// That assumption breaks around VMManager::Reset(): SPU2::CreateOutputStream()
+	// (called from hwReset() by way of SPU2::Reset() -> UpdateSampleRate(), or
+	// via ApplySettings()) does `s_output_stream.reset()` then constructs a
+	// brand new stream, and s_audio_stream is just an observer of whichever
+	// object SPU2 currently owns - it isn't updated until the new stream's
+	// constructor runs. Between those two points the old AudioStream is fully
+	// destroyed while s_audio_stream still points at it. retro_run() keeps
+	// getting called on its own schedule the whole time (nothing about
+	// retro_reset() pauses it), so OutputAudio() can - and did - dereference
+	// a freed stream via s_audio_stream mid-teardown. s_audio_stream_mutex
+	// closes that window: OutputAudio() holds it only for the quick
+	// PullFrames() call, and retro_reset() holds it for the full
+	// VMManager::Reset(), so the two can never overlap regardless of which
+	// thread ends up calling what.
+	static std::mutex s_audio_stream_mutex;
+
 	class LibretroAudioStream final : public AudioStream
 	{
 	public:
@@ -994,8 +1013,40 @@ void LibretroHost::CPUThreadMain()
 				VMManager::SetState(VMState::Running);
 				// the frontend paces us through retro_run(); never wall-clock throttle
 				VMManager::SetLimiterMode(LimiterModeType::Unlimited);
-				while (VMManager::GetState() == VMState::Running && s_running.load(std::memory_order_acquire))
+				while (s_running.load(std::memory_order_acquire))
+				{
+					const VMState state = VMManager::GetState();
+					if (state == VMState::Resetting)
+					{
+						// retro_reset() (via Host::RunOnCPUThread) already called
+						// VMManager::Reset() once to get here - that call only
+						// flagged VMState::Resetting and returned, because it ran
+						// while state was Running (see VMManager::Reset()'s own
+						// comment: it exits the rec's tight execution loop first,
+						// then expects to be called again to do the real work).
+						// Calling it again now, with state == Resetting, bypasses
+						// that early-out and actually runs hwReset()/SPU2::Reset()/
+						// etc., ending by flipping state back to Running - exactly
+						// the pattern every other PCSX2 frontend's main loop uses
+						// (see QtHost's `case VMState::Resetting: VMManager::Reset();`).
+						// Without this case here, this loop's condition just saw a
+						// non-Running state and fell through to VMManager::Shutdown()
+						// below - i.e. "Reštart" silently tore the whole VM down
+						// instead of resetting it, out from under retro_run() still
+						// being called every frame by the frontend. This is also why
+						// the lock has to be here and not in retro_reset(): this is
+						// where SPU2's output stream is actually torn down and
+						// recreated, not there.
+						std::unique_lock lock(s_audio_stream_mutex);
+						VMManager::Reset();
+						continue;
+					}
+
+					if (state != VMState::Running)
+						break;
+
 					VMManager::Execute();
+				}
 				VMManager::Shutdown(false);
 			}
 			else
@@ -1230,6 +1281,21 @@ void retro_deinit(void)
 			s_exit_requested = false;
 		}
 	}
+
+	// MTVU's VU1 thread is a second background thread the core owns, and
+	// nothing has joined it up to this point - the CPU thread above only ever
+	// waits on it (WaitVU()), it never closes it. Left alone, the only thing
+	// that would ever join it is VU_Thread's own destructor, and for the
+	// global `vu1Thread` that lives in this DLL, that destructor only runs at
+	// DLL_PROCESS_DETACH inside FreeLibrary() - under the loader lock. That is
+	// exactly the deadlock class this function was already patched to avoid
+	// for the CPU thread (see the pacing-handshake break above): a frontend
+	// that calls retro_deinit() and then unloads the module (which this one
+	// does, since we report SET_SUPPORT_NO_GAME false) joins the VU1 thread
+	// from within DllMain, and the VU1 thread's own exit can need that same
+	// lock to come back. Close it here instead, while we're still safely
+	// outside FreeLibrary().
+	vu1Thread.Close();
 
 	// Hand the process' fault handling back to the frontend. Nothing of ours
 	// runs from here on, and the frontend unloads this module while it keeps
@@ -1764,8 +1830,29 @@ void retro_unload_game(void)
 
 void retro_reset(void)
 {
-	if (s_running.load(std::memory_order_acquire))
-		Host::RunOnCPUThread([]() { VMManager::Reset(); });
+	if (!s_running.load(std::memory_order_acquire))
+		return;
+
+	// VMManager::Reset() only *requests* a reset from here: called while the
+	// VM is Running (always, since this can only run against a live session),
+	// it just flags VMState::Resetting and returns immediately - see its own
+	// comment ("we tell the rec to exit execution, _then_ reset"). The actual
+	// reset (hwReset(), SPU2::Reset(), ...) only happens once something calls
+	// VMManager::Reset() again while state == Resetting; every other PCSX2
+	// frontend's main loop has a case for that (see QtHost's `case
+	// VMState::Resetting: VMManager::Reset(); continue;`) and drives the real
+	// reset from there. CPUThreadMain() below does the same now - that's
+	// also where s_audio_stream_mutex actually needs to be held (see its
+	// declaration, above OutputAudio()), not here: locking around *this*
+	// call only serializes the flag-set against its own caller, and the real
+	// teardown/rebuild of the audio stream happens later, back in
+	// CPUThreadMain(), on the CPU thread's own schedule.
+	//
+	// block=true still matters on its own merits (matches ChangeDiscIndex):
+	// it stops retro_reset() from returning - and a second reset or a
+	// save-state op from being accepted - before the request has even been
+	// queued.
+	Host::RunOnCPUThread([]() { VMManager::Reset(); }, true);
 }
 
 // Translate libretro joypad/analog state into DualShock2 binds. Called at the
@@ -1878,8 +1965,11 @@ static void OutputAudio()
 	static int16_t s16_buffer[MAX_AUDIO_FRAMES_PER_RUN * 2];
 
 	u32 frames = 0;
-	if (s_audio_stream)
-		frames = s_audio_stream->PullFrames(float_buffer, MAX_AUDIO_FRAMES_PER_RUN);
+	{
+		std::unique_lock lock(s_audio_stream_mutex);
+		if (s_audio_stream)
+			frames = s_audio_stream->PullFrames(float_buffer, MAX_AUDIO_FRAMES_PER_RUN);
+	}
 
 	if (frames == 0)
 	{

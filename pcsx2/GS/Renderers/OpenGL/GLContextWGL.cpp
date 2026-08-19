@@ -296,7 +296,14 @@ bool GLContextWGL::CreatePBuffer(Error* error)
 		wc.lpszClassName = window_class_name;
 		wc.hIconSm = NULL;
 
-		if (!RegisterClassExW(&wc))
+		// window_class_registered is reset to false every time this module is
+		// reloaded (it's a per-instance static), but the class itself was
+		// registered against GetModuleHandle(nullptr) - the host process, not
+		// this module - so it outlives a FreeLibrary()/LoadLibrary() cycle of
+		// this DLL. A second load's registration attempt is therefore expected
+		// to collide with the still-live class from the previous load: that's
+		// not a failure, the class is still perfectly usable.
+		if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
 		{
 			Error::SetStringView(error, "(ContextWGL::CreatePBuffer) RegisterClassExW() failed");
 			return false;
