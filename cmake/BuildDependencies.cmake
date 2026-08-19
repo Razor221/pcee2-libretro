@@ -62,7 +62,9 @@ if(CMAKE_FIND_ROOT_PATH)
 endif()
 
 # FindShaderc looks for the shared library; what gets built here is the combined
-# static archive, which is what the core wants linked in anyway.
+# static archive. SHADERC_STATIC goes with it - without that the core would be
+# built to load a shaderc shared library at runtime, and there is none to load.
 if(NOT SHADERC_LIBRARY AND EXISTS "${PCEE2_DEPS_PREFIX}/lib/libshaderc_combined.a")
 	set(SHADERC_LIBRARY "${PCEE2_DEPS_PREFIX}/lib/libshaderc_combined.a" CACHE FILEPATH "" FORCE)
+	set(SHADERC_STATIC ON CACHE BOOL "" FORCE)
 endif()
