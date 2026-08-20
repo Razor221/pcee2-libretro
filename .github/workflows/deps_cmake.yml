@@ -46,7 +46,15 @@ jobs:
         if: matrix.name == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build
+          # SDL3 checks for its X11 and Wayland headers at configure time and
+          # stops when one is missing, so a bare runner needs the same list the
+          # jobs that build the core install.
+          sudo apt-get install -y ninja-build \
+            libx11-dev libxrandr-dev libxext-dev libxcursor-dev libxi-dev \
+            libxinerama-dev libxfixes-dev libxrender-dev libxss-dev libxtst-dev \
+            libwayland-dev libxkbcommon-dev libegl-dev libgl1-mesa-dev libgbm-dev \
+            libdrm-dev libdecor-0-dev libdbus-1-dev libudev-dev \
+            libpulse-dev libasound2-dev libpipewire-0.3-dev
 
       - name: Install Packages (macOS)
         if: matrix.name == 'macos'
