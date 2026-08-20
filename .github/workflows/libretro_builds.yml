@@ -38,7 +38,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: deps
-          key: linux-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
+          key: linux-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh', 'pcee2-libretro/scripts/deps.versions') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -108,7 +108,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: deps
-          key: linux-arm64-libretro-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
+          key: linux-arm64-libretro-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh', 'pcee2-libretro/scripts/deps.versions') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -166,7 +166,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: deps
-          key: linux-arm64-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
+          key: linux-arm64-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh', 'pcee2-libretro/scripts/deps.versions') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -243,7 +243,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: deps
-          key: linux-arm64-bookworm-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
+          key: linux-arm64-bookworm-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh', 'pcee2-libretro/scripts/deps.versions') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -335,7 +335,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: deps
-          key: linux-arm64-bookworm-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh') }}
+          key: linux-arm64-bookworm-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh', 'pcee2-libretro/scripts/deps.versions') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -411,7 +411,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: deps
-          key: windows-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-windows.bat') }}
+          key: windows-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-windows.bat', 'pcee2-libretro/scripts/deps.versions') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -425,7 +425,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: deps
-          key: windows-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-windows.bat') }}
+          key: windows-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-windows.bat', 'pcee2-libretro/scripts/deps.versions') }}
 
       - name: Generate CMake
         shell: cmd
@@ -482,7 +482,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/deps
-          key: macos-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh') }}
+          key: macos-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh', 'pcee2-libretro/scripts/deps.versions') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -494,7 +494,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ~/deps
-          key: macos-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh') }}
+          key: macos-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh', 'pcee2-libretro/scripts/deps.versions') }}
 
       - name: Generate CMake
         run: |

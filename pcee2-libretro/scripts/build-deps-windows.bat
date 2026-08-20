@@ -11,19 +11,10 @@ if "%~1"=="" (
 set "INSTALLDIR=%~1"
 mkdir "%INSTALLDIR%" 2>nul
 
-set ZLIB=v1.3.2
-set LIBPNG=v1.6.58
-set LIBJPEGTURBO=3.1.4.1
-set WEBP=v1.6.0
-set LZ4=v1.10.0
-set ZSTD=v1.5.7
-set FREETYPE=VER-2-14-3
-set SDL=release-3.4.10
-set PLUTOVG=v1.3.2
-set PLUTOSVG=v0.0.7
-set RAPIDYAML=v0.12.1
-set DXHEADERS=v1.618.2
-set SHADERC=v2026.2
+rem Revisions live in deps.versions, shared with the other platform scripts and
+rem with deps/CMakeLists.txt, so the paths cannot drift apart. Plain KEY=value
+rem lines; findstr picks those out and leaves the comments alone.
+for /f "usebackq tokens=1,2 delims==" %%a in (`findstr /r "^[A-Z0-9_][A-Z0-9_]*=" "%~dp0deps.versions"`) do set "%%a=%%b"
 
 rem The core links the CRT statically so it loads without the VC++
 rem redistributable installed, so every dependency has to use /MT as well -
@@ -51,8 +42,8 @@ cmake -S libpng -B libpng\b %COMMON% -DPNG_SHARED=OFF -DPNG_STATIC=ON -DPNG_TEST
 cmake --build libpng\b --target install || exit /b 1
 if exist "%INSTALLDIR%\lib\libpng16_static.lib" copy /y "%INSTALLDIR%\lib\libpng16_static.lib" "%INSTALLDIR%\lib\libpng16.lib"
 
-echo === libjpeg-turbo %LIBJPEGTURBO% ===
-if not exist libjpeg-turbo git clone --depth 1 -b %LIBJPEGTURBO% https://github.com/libjpeg-turbo/libjpeg-turbo || exit /b 1
+echo === libjpeg-turbo %JPEGTURBO% ===
+if not exist libjpeg-turbo git clone --depth 1 -b %JPEGTURBO% https://github.com/libjpeg-turbo/libjpeg-turbo || exit /b 1
 cmake -S libjpeg-turbo -B libjpeg-turbo\b %COMMON% -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_SIMD=OFF -DWITH_TURBOJPEG=OFF || exit /b 1
 cmake --build libjpeg-turbo\b --target install || exit /b 1
 if exist "%INSTALLDIR%\lib\jpeg-static.lib" copy /y "%INSTALLDIR%\lib\jpeg-static.lib" "%INSTALLDIR%\lib\jpeg.lib"
@@ -112,6 +103,13 @@ if not exist shaderc git clone --depth 1 -b %SHADERC% https://github.com/google/
 cd shaderc
 "%PYTHON%" utils\git-sync-deps || exit /b 1
 cd ..
+rem git-sync-deps has just put DEPS' revision in place; move it forward. The
+rem reason for the override is recorded in deps.versions.
+for /f "delims=" %%h in ('git -C shaderc\third_party\glslang rev-parse HEAD') do set "GLSLANG_HEAD=%%h"
+if not "!GLSLANG_HEAD!"=="%GLSLANG%" (
+  git -C shaderc\third_party\glslang fetch --depth 1 origin %GLSLANG% || exit /b 1
+  git -C shaderc\third_party\glslang checkout --detach FETCH_HEAD || exit /b 1
+)
 rem SPIRV-Tools and glslang generate sources with Python scripts of their own, so
 rem hand them the interpreter we resolved instead of letting find_package() guess
 rem (PYTHON_EXECUTABLE covers the older FindPythonInterp path they still use).

@@ -23,12 +23,17 @@ SHADERC=v2026.3
 # survive the same corruption, which is why this took a while to place.
 GLSLANG=90afccfbd49dff0349d86a41762e9de24e1df811
 
-# Optional, and for the Windows cross build.
+# Packaged on Linux, so only built there when the distribution's copy is too old
+# (or when a libjpeg SONAME must not follow the core); on macOS and Windows there
+# are no system copies and these are built unconditionally.
 ZLIB=v1.3.2
 LIBPNG=v1.6.58
 LIBPNG_OPTIONAL=v1.6.43
 DXHEADERS=v1.618.2
-JPEGTURBO=3.1.3
-ZSTD=v1.5.6
+JPEGTURBO=3.1.4.1
+ZSTD=v1.5.7
 LZ4=v1.10.0
 WEBP=v1.6.0
+
+# macOS only: the Vulkan implementation the core dlopen's. Prebuilt release.
+MOLTENVK=v1.4.0
