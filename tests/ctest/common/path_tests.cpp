@@ -113,6 +113,40 @@ TEST(Path, Combine)
 #endif
 }
 
+// The frontend VFS can hand the core a URI instead of a path: RetroArch spells
+// storage access framework content as "saf://<tree>/<path>". The two slashes
+// after the scheme have to survive, otherwise the frontend no longer
+// recognises the path it gave us.
+TEST(Path, URI)
+{
+	static constexpr const char* TREE =
+		"saf://content%3A%2F%2Fcom.android.externalstorage.documents%2Ftree%2Fprimary%253ARoms";
+
+	ASSERT_EQ(Path::Combine("saf://tree", "track01.bin"), Path::ToNativePath("saf://tree/track01.bin"));
+	ASSERT_EQ(Path::Combine("saf://tree/ps2", "track01.bin"), Path::ToNativePath("saf://tree/ps2/track01.bin"));
+	ASSERT_EQ(Path::Combine(TREE, "game.cue"), Path::ToNativePath(std::string(TREE) + "/game.cue"));
+
+	// What resolving a cue sheet's track file does.
+	ASSERT_EQ(Path::GetDirectory("saf://tree/ps2/game.cue"), "saf://tree/ps2");
+	ASSERT_EQ(Path::Combine(Path::GetDirectory("saf://tree/ps2/game.cue"), "track01.bin"),
+		Path::ToNativePath("saf://tree/ps2/track01.bin"));
+
+	ASSERT_EQ(Path::Canonicalize("saf://tree/ps2/./game.cue"), Path::ToNativePath("saf://tree/ps2/game.cue"));
+	ASSERT_EQ(Path::Canonicalize("saf://tree/ps2/sub/../game.cue"), Path::ToNativePath("saf://tree/ps2/game.cue"));
+
+	// Any scheme is kept, not just the one RetroArch uses.
+	ASSERT_EQ(Path::Combine("content://provider/doc", "x"), Path::ToNativePath("content://provider/doc/x"));
+
+	// What is not a scheme keeps being treated as a path, so its doubled
+	// separator is collapsed as before.
+	ASSERT_EQ(Path::Combine("1saf://tree", "baz"), Path::ToNativePath("1saf:/tree/baz"));
+	ASSERT_EQ(Path::Combine("foo/bar://baz", "x"), Path::ToNativePath("foo/bar:/baz/x"));
+	ASSERT_EQ(Path::Combine("C://foo", "x"), Path::ToNativePath("C:/foo/x"));
+#ifndef _WIN32
+	ASSERT_EQ(Path::ToNativePath("saf://tree/ps2/game.cue"), "saf://tree/ps2/game.cue");
+#endif
+}
+
 TEST(Path, AppendDirectory)
 {
 	ASSERT_EQ(Path::AppendDirectory("foo/bar", "baz"), Path::ToNativePath("foo/baz/bar"));

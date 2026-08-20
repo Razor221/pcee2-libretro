@@ -104,6 +104,35 @@ static inline bool FileSystemCharacterIsSane(char32_t c, bool strip_slashes)
 	return true;
 }
 
+// Length of a "scheme://" prefix, or zero when the string does not start with
+// one. The frontend's VFS can hand the core a URI rather than a path -
+// RetroArch spells storage access framework content as
+// "saf://<percent-encoded tree uri>/<path below the tree>" - and the two
+// slashes after the scheme are part of it, not a separator that can be
+// collapsed the way a doubled one in a path can.
+static size_t GetURISchemeLength(const std::string_view str)
+{
+	// A one-letter scheme is not distinguished from a Windows drive: "C://foo"
+	// is a path with a doubled separator, not a URI.
+	const std::string_view::size_type pos = str.find("://");
+	if (pos == std::string_view::npos || pos < 2)
+		return 0;
+
+	// RFC 3986: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+	for (std::string_view::size_type i = 0; i < pos; i++)
+	{
+		const char ch = str[i];
+		if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'))
+			continue;
+		if (i > 0 && ((ch >= '0' && ch <= '9') || ch == '+' || ch == '-' || ch == '.'))
+			continue;
+
+		return 0;
+	}
+
+	return pos + 3;
+}
+
 template <typename T>
 static inline void PathAppendString(std::string& dst, const T& src)
 {
@@ -113,6 +142,17 @@ static inline void PathAppendString(std::string& dst, const T& src)
 	bool last_separator = (!dst.empty() && dst.back() == FS_OSPATH_SEPARATOR_CHARACTER);
 
 	size_t index = 0;
+
+	// A URI keeps its scheme verbatim; only what follows it is a path.
+	if (dst.empty())
+	{
+		if (const size_t scheme_length = GetURISchemeLength(std::string_view(src)); scheme_length > 0)
+		{
+			dst.append(std::string_view(src).substr(0, scheme_length));
+			last_separator = true;
+			index = scheme_length;
+		}
+	}
 
 #ifdef _WIN32
 	// special case for UNC paths here
@@ -500,7 +540,12 @@ void Path::ToNativePath(std::string* path)
 
 std::string Path::Canonicalize(const std::string_view path)
 {
-	std::vector<std::string_view> components = Path::SplitNativePath(path);
+	// A URI's scheme is not a component to be split and rejoined - rejoining
+	// would collapse the two slashes behind it. Set it aside and canonicalize
+	// what follows.
+	const size_t scheme_length = GetURISchemeLength(path);
+
+	std::vector<std::string_view> components = Path::SplitNativePath(path.substr(scheme_length));
 	std::vector<std::string_view> new_components;
 	new_components.reserve(components.size());
 	for (const std::string_view& component : components)
@@ -526,7 +571,11 @@ std::string Path::Canonicalize(const std::string_view path)
 		}
 	}
 
-	return Path::JoinNativePath(new_components);
+	std::string ret = Path::JoinNativePath(new_components);
+	if (scheme_length > 0)
+		ret.insert(0, path.substr(0, scheme_length));
+
+	return ret;
 }
 
 void Path::Canonicalize(std::string* path)
