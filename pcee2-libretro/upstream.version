@@ -1,0 +1,10 @@
+# The upstream PCSX2 revision this core's emulation code is merged up to.
+# The build reports it as the core version (retro_get_system_info's
+# library_version, the Vulkan application version, the version stamped into
+# savestates), so a pcee2 build names the same version as the standalone PCSX2
+# it corresponds to - which is also the version whose bin/resources it expects.
+#
+# Bump both lines in the same commit that merges upstream; CMake warns when the
+# recorded commit is not an ancestor of the tree being built.
+PCSX2_VERSION=v2.7.523
+PCSX2_COMMIT=6db638dc0373769b4c5d5b5dd7ed6da641b9a18e

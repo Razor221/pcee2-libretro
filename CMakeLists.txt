@@ -68,6 +68,10 @@ include(SearchForStuff)
 
 # Must be done after SearchForStuff
 get_git_version_info()
+# pcee2: name the upstream PCSX2 release the emulation code is merged up to,
+# not pcee2's own tag - that is the version whose bin/resources this core wants.
+include(Pcee2UpstreamVersion)
+apply_pcee2_upstream_version()
 write_svnrev_h()
 
 # make common

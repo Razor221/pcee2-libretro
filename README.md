@@ -12,6 +12,10 @@ PCSX2 snapshot — this port keeps the libretro layer *additive*: the emulation
 core is tracked from [upstream PCSX2](https://github.com/PCSX2/pcsx2) with a
 minimal set of hooks, so rebasing onto new upstream releases stays cheap.
 
+The core reports the upstream PCSX2 version it is built from, so the version
+RetroArch shows names the standalone PCSX2 the emulation code corresponds to —
+currently **v2.7.523**. See [Upstream sync and versioning](#upstream-sync-and-versioning).
+
 This project is not affiliated with or endorsed by the PCSX2 team.
 
 ## Status
@@ -19,6 +23,7 @@ This project is not affiliated with or endorsed by the PCSX2 team.
 | Area | Status |
 |---|---|
 | Boot + video (Vulkan, surfaceless) | ✅ working |
+| Zero-copy Vulkan output (libretro HW render) | ✅ working, default on Vulkan |
 | Software renderer (presented via Vulkan) | ✅ working |
 | Audio (48 kHz / 44.1 kHz PSX mode) | ✅ working |
 | Pad input (DualShock 2, 2 ports, analogs) | ✅ working |
@@ -38,9 +43,12 @@ This project is not affiliated with or endorsed by the PCSX2 team.
 | Windows x64 build (MSVC, via CI) | ✅ community-tested (WRC 4, GTA SA, Killzone on Vulkan) |
 | macOS x86_64 build (via CI) | ⚠️ compiles + links, untested — feedback welcome |
 
-Output is a per-frame GPU readback (double-buffered on the GS thread, one
-frame of latency). A zero-copy path via libretro Vulkan context negotiation
-may come later.
+On the Vulkan renderer the core shares the frontend's `VkDevice` through
+libretro context negotiation and hands over the rendered image directly, with
+no GPU readback in the way. Everything else (OpenGL, software, D3D, Metal, or a
+frontend that refuses HW render) falls back to the per-frame readback path,
+which is double-buffered on the GS thread and costs one frame of latency;
+`PCEE2_READBACK=1` forces it on Vulkan too, for A/B testing.
 
 ## Download
 
@@ -58,7 +66,7 @@ workflow.
 ## Setup
 
 1. Put a PS2 BIOS dump into `<retroarch system dir>/pcsx2/bios/`.
-2. Copy the `resources` directory from a PCSX2 installation (or from `bin/resources` of this repo) to `<retroarch system dir>/pcsx2/resources/`.
+2. Optional: copy the `resources` directory from a PCSX2 installation of the same version (or from `bin/resources` of this repo) to `<retroarch system dir>/pcsx2/resources/`. The shaders and fonts the core cannot start without are compiled into it, so this only adds the game database and patches; `PCEE2_EXTERNAL_RESOURCES=1` makes the on-disk copies win over the built-in ones.
 3. For built-in game patches (including the widescreen / no-interlacing options), download [`patches.zip`](https://github.com/PCSX2/pcsx2_patches/releases/latest/download/patches.zip) into `<retroarch system dir>/pcsx2/resources/patches.zip`.
 4. Load a disc image (`.iso`, `.chd`, `.cso`, `.gz`, `.bin`, `.mdf`, `.nrg`, `.elf`) with the core.
 5. Optional: copy your standalone `PCSX2.ini` to `<retroarch system dir>/pcsx2/inis/PCSX2.ini` — the core adopts its emulation settings (EmuCore, speed hacks, CPU, GS, game fixes, memory cards, DEV9 network/HDD) as the baseline. Core options still override their respective settings.
@@ -128,8 +136,11 @@ automatic per-game fixes from the GameDB).
 - The frontend (`pcee2-libretro/Libretro.cpp`) is modeled on `pcsx2-gsrunner`:
   a dedicated CPU thread runs the `VMManager::Execute()` loop, and
   `Host::PumpMessagesOnCPUThread()` paces it 1:1 against `retro_run()`.
-- Frames arrive through `GSSetFramebufferReadback()` — a double-buffered
-  readback on the GS thread added for this port (`GSRenderer.cpp`).
+- Frames leave the GS thread through `VKLibretro`
+  (`pcsx2/GS/Renderers/Vulkan/VKLibretro.cpp`), which publishes the rendered
+  `VkImage` to `retro_run()` for `set_image`; the fallback path uses
+  `GSSetFramebufferReadback()`, a double-buffered readback on the GS thread
+  added for this port (`GSRenderer.cpp`).
 - Audio is pulled from a custom `AudioStream` registered through
   `SPU2::CustomOutputStreamFactory`.
 - Savestates use `SaveState_ZipToBuffer`/`SaveState_UnzipFromBuffer`
@@ -139,8 +150,30 @@ automatic per-game fixes from the GameDB).
   RetroArch's deinit/init content cycles, mirroring the Qt frontend's
   lifetime model.
 - Core modifications beyond these hooks are intentionally minimal; see
-  `git log --oneline upstream/master..libretro -- pcsx2/ common/` for the
-  full delta.
+  `git log --oneline pcsx2up/master..libretro -- pcsx2/ common/` for the
+  full delta (`pcsx2up` = the PCSX2 remote, see below).
+
+## Upstream sync and versioning
+
+`pcee2-libretro/upstream.version` records the upstream PCSX2 release the
+emulation code is merged up to. The build reads it and reports that version as
+the core version — in RetroArch's core info, in the Vulkan application version
+and in the version stamped into savestates — instead of describing pcee2's own
+git tags, which say nothing about which PCSX2 is inside. `bin/resources` from
+the same PCSX2 version is the matching set.
+
+Syncing to a newer PCSX2:
+
+```sh
+git remote add pcsx2up https://github.com/PCSX2/pcsx2.git   # once
+git fetch pcsx2up master --tags
+git merge pcsx2up/master
+# then bump PCSX2_VERSION / PCSX2_COMMIT in pcee2-libretro/upstream.version
+# to `git describe --tags pcsx2up/master` and its commit
+```
+
+CMake warns when the recorded commit is not an ancestor of the tree being
+built, so a forgotten bump shows up in the build log.
 
 ## License
 
