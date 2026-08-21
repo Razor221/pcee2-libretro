@@ -198,7 +198,7 @@ struct PS_OUTPUT
 
 #if PS_RETURN_COLOR
 	#if PS_DATE == 1 || PS_DATE == 2
-		float c : SV_Target;
+		float c0 : SV_Target;
 	#else
 		
 		float4 c0 : SV_Target0;
@@ -2014,11 +2014,6 @@ VS_OUTPUT vs_main_expand(uint vid : SV_VertexID)
 		vtx.inv_cov = is_near_corner ? 0.0f : 1.0f; // Full coverage at near corner, otherwise none.
 	
 		vtx.interior = 0;
-
-		#if !VS_IIP
-			// Get the provoking vertex color (first vertex in DX)
-			vtx.c = i0 == 0 ? vtx.c : (i1 == 0 ? other.c : opposite.c);
-		#endif
 	}
 
 	return vtx;

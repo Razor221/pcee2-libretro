@@ -1262,7 +1262,7 @@ void GSDeviceOGL::DestroyPipelineStatisticsQueries()
 		glEndQuery(GL_FRAGMENT_SHADER_INVOCATIONS_ARB);
 	}
 
-	for (int i = 0; i < m_pipeline_statistics_queries.size(); i++)
+	for (size_t i = 0; i < m_pipeline_statistics_queries.size(); i++)
 	{
 		glDeleteQueries(2, m_pipeline_statistics_queries[i].data());
 		m_pipeline_statistics_queries[i].fill(0);
@@ -1292,7 +1292,7 @@ bool GSDeviceOGL::SetGPUPipelineStatisticsEnabled(bool enabled)
 	else
 		DestroyPipelineStatisticsQueries();
 
-	return true;
+	return (enabled == m_gpu_pipeline_statistics_enabled);
 }
 
 void GSDeviceOGL::DrawPrimitive()

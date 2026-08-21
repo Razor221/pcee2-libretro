@@ -899,7 +899,7 @@ struct alignas(16) GSHWDrawConfig
 
 		__fi bool HasDepthROV() const
 		{
-			return rov_depth == PS_ROV_DEPTH::READ_ONLY || rov_depth == PS_ROV_DEPTH::READ_WRITE;
+			return rov_depth != PS_ROV_DEPTH::NONE;
 		}
 
 		__fi bool HasDepthROVWrite() const
@@ -1642,6 +1642,8 @@ public:
 	virtual void PushDebugGroup(const char* fmt, ...) = 0;
 	virtual void PopDebugGroup() = 0;
 	virtual void InsertDebugMessage(DebugMessageCategory category, const char* fmt, ...) = 0;
+
+	GSTexture::Usage GetDepthStencilUsage() const;
 
 	GSTexture* FetchSurface(GSTexture::Usage usage, int width, int height, int levels, GSTexture::Format format, bool clear, bool prefer_reuse);
 	GSTexture* FetchSurface(GSTexture::Usage usage, const GSVector2i& size, int levels, GSTexture::Format format, bool clear, bool prefer_reuse);

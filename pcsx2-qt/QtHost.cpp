@@ -898,7 +898,12 @@ std::optional<WindowInfo> EmuThread::acquireRenderWindow(bool recreate_window)
 	// Check if we're wanting to get exclusive fullscreen. This should be safe to read, since we're going to be calling from the GS thread.
 	m_is_exclusive_fullscreen = m_is_fullscreen && GSWantsExclusiveFullscreen();
 	const bool window_fullscreen = m_is_fullscreen && !m_is_exclusive_fullscreen;
+#ifdef __APPLE__
+	// Fullscreen the main window instead of opening a separate one on macOS.
+	const bool render_to_main = !m_is_exclusive_fullscreen && m_is_rendering_to_main;
+#else
 	const bool render_to_main = !m_is_exclusive_fullscreen && !window_fullscreen && m_is_rendering_to_main;
+#endif
 
 	return emit onAcquireRenderWindowRequested(recreate_window, window_fullscreen, render_to_main, m_is_surfaceless);
 }
@@ -1068,27 +1073,15 @@ void EmuThread::updatePerformanceMetrics(bool force)
 
 		if (gpu_usage != m_last_gpu_usage || force)
 		{
-			QString text;
-			if (gpu_usage == 0)
-				text = tr("GPU: N/A");
-			else
-				text = tr("GPU: %1%").arg(gpu_usage, 0, 'f', 0);
-
 			QMetaObject::invokeMethod(g_main_window, "setStatusGPUText", Qt::QueuedConnection,
-				Q_ARG(const QString&, text));
+				Q_ARG(const QString&, tr("GPU: %1%").arg(gpu_usage, 0, 'f', 0)));
 			m_last_gpu_usage = gpu_usage;
 		}
 
 		if (gfps != m_last_game_fps || force)
 		{
-			QString text;
-			if (gfps == 0)
-				text = tr("FPS: N/A");
-			else
-				text = tr("FPS: %1").arg(gfps, 0, 'f', 0);
-
 			QMetaObject::invokeMethod(g_main_window, "setStatusFPSText", Qt::QueuedConnection,
-				Q_ARG(const QString&, text));
+				Q_ARG(const QString&, gfps == 0 ? tr("FPS: N/A") : tr("FPS: %1").arg(gfps, 0, 'f', 0)));
 			m_last_game_fps = gfps;
 		}
 
@@ -1267,7 +1260,7 @@ void Host::RunOnGSThread(std::function<void()> function)
 
 void Host::RefreshGameListAsync(bool invalidate_cache)
 {
-	QMetaObject::invokeMethod(g_main_window, "refreshGameList", Qt::QueuedConnection, Q_ARG(bool, invalidate_cache));
+	QMetaObject::invokeMethod(g_main_window, "refreshGameList", Qt::QueuedConnection, Q_ARG(bool, invalidate_cache), Q_ARG(bool, true));
 }
 
 void Host::CancelGameListRefresh()
