@@ -8,6 +8,8 @@
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <chrono>
+#include <shared_mutex>
 #include <vector>
 
 // Only the retro_hw_render_interface_vulkan layout is needed here; pull it
@@ -20,7 +22,13 @@ namespace VKLibretro
 	bool Active = false;
 	InitInfo Init;
 
+	// Written by the frontend thread (context_reset/context_destroy), read by
+	// the GS thread on every queue submit. The lock keeps a submit that is
+	// already inside the wrapper holding a valid interface: dropping it while
+	// that submit runs left the GS thread calling through a freed vtable
+	// (SIGSEGV at a null lock_queue) or releasing a queue lock it never took.
 	static retro_hw_render_interface_vulkan* s_hw_render = nullptr;
+	static std::shared_timed_mutex s_hw_render_mutex;
 
 	static PFN_vkGetInstanceProcAddr s_vkGetInstanceProcAddr_org;
 	static PFN_vkGetDeviceProcAddr s_vkGetDeviceProcAddr_org;
@@ -85,11 +93,16 @@ namespace VKLibretro
 	static VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit_libretro(
 		VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits, VkFence fence)
 	{
-		if (s_hw_render)
-			s_hw_render->lock_queue(s_hw_render->handle);
+		// One read for the whole critical section: the queue lock has to be
+		// released through the same interface it was taken from, and holding
+		// the shared lock stops context_destroy from retiring it underneath.
+		std::shared_lock<std::shared_timed_mutex> iface_guard(s_hw_render_mutex);
+		retro_hw_render_interface_vulkan* const iface = s_hw_render;
+		if (iface)
+			iface->lock_queue(iface->handle);
 		const VkResult res = s_vkQueueSubmit_org(queue, submitCount, pSubmits, fence);
-		if (s_hw_render)
-			s_hw_render->unlock_queue(s_hw_render->handle);
+		if (iface)
+			iface->unlock_queue(iface->handle);
 		return res;
 	}
 
@@ -147,11 +160,24 @@ namespace VKLibretro
 
 	void SetHWRenderInterface(void* iface)
 	{
+		// Waits out a submit that is already inside the wrapper, so once the
+		// frontend's context_destroy returns from here nothing can still be
+		// calling into the interface it is about to throw away.
+		//
+		// Bounded on purpose: that submit may itself be waiting on the
+		// frontend's queue lock, and if the frontend happens to hold that lock
+		// while retiring the interface, an unbounded wait here would deadlock
+		// the two threads against each other. A rare torn hand-off beats a
+		// hung emulator, so time out, say so, and go ahead.
+		std::unique_lock<std::shared_timed_mutex> iface_guard(s_hw_render_mutex, std::defer_lock);
+		if (!iface_guard.try_lock_for(std::chrono::milliseconds(500)))
+			Console.Warning("VKLibretro: a queue submit is still in flight; retiring the render interface anyway.");
 		s_hw_render = static_cast<retro_hw_render_interface_vulkan*>(iface);
 	}
 
 	void* GetHWRenderInterface()
 	{
+		std::shared_lock<std::shared_timed_mutex> iface_guard(s_hw_render_mutex);
 		return s_hw_render;
 	}
 
@@ -200,7 +226,10 @@ namespace VKLibretro
 	void Shutdown()
 	{
 		Init = InitInfo();
-		s_hw_render = nullptr;
+		{
+			std::unique_lock<std::shared_timed_mutex> iface_guard(s_hw_render_mutex);
+			s_hw_render = nullptr;
+		}
 		std::lock_guard<std::mutex> lock(s_frame_mutex);
 		s_frame = Frame();
 		s_frame_serial = 0;

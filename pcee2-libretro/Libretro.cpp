@@ -1161,8 +1161,22 @@ static void OnContextReset(void)
 
 static void OnContextDestroy(void)
 {
+	// Called by the frontend on its own thread whenever it tears the video
+	// driver down under us - a fullscreen toggle (RetroArch's F) does it just
+	// like an av_info change. The GS thread keeps running and every queue
+	// submit goes through the interface that is about to be retired, so stop
+	// presenting, let the GS thread finish what it already has, and only then
+	// drop the interface (SetHWRenderInterface waits out a submit that is
+	// already inside the wrapper).
 	VKLibretro::AbortPacing();
 	s_context_ready.store(false, std::memory_order_release);
+	if (MTGS::IsOpen())
+	{
+		std::atomic_bool gs_drained{false};
+		MTGS::RunOnGSThread([&gs_drained]() { gs_drained.store(true, std::memory_order_release); });
+		for (int i = 0; i < 1000 && !gs_drained.load(std::memory_order_acquire); i++)
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
 	VKLibretro::SetHWRenderInterface(nullptr);
 }
 
