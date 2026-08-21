@@ -60,6 +60,7 @@ option(PCEE2_BUILD_DEPS "Build the from-source dependencies as part of this conf
 option(PCEE2_SDL_STATIC "With PCEE2_BUILD_DEPS, link SDL3 statically into the core" ON)
 option(PCEE2_BUILD_PNG_ZSTD "With PCEE2_BUILD_DEPS, build libpng and zstd too" OFF)
 option(PCEE2_BUILD_JPEG "With PCEE2_BUILD_DEPS, build libjpeg-turbo too" OFF)
+option(PCEE2_BUILD_LIBRETRO "With PCEE2_BUILD_LIBRETRO, build for libretro" ON)
 if(PCEE2_BUILD_DEPS)
 	include(BuildDependencies)
 endif()

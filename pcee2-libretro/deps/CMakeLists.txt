@@ -46,13 +46,12 @@ endforeach()
 option(PCEE2_SDL_STATIC "Build SDL3 as a static library rather than a shared one" ON)
 option(PCEE2_BUILD_PNG_ZSTD "Build libpng and zstd, for distributions whose copies are too old" OFF)
 option(PCEE2_BUILD_JPEG "Build libjpeg-turbo static, so no libjpeg SONAME is baked in" OFF)
+option(BUILD_IMAGE_LIBS "Build libwebp, lz4" OFF)
 
 # macOS and Windows ship none of the image and compression libraries the core
 # needs, so there they are not optional.
 if(APPLE OR WIN32)
 	set(BUILD_IMAGE_LIBS ON)
-else()
-	set(BUILD_IMAGE_LIBS OFF)
 endif()
 
 # What every dependency gets: the build type, the install prefix, PIC (the core
@@ -186,7 +185,7 @@ if(BUILD_IMAGE_LIBS)
 				${CMAKE_INSTALL_PREFIX}/lib/libwebp.a ${CMAKE_INSTALL_PREFIX}/lib/libsharpyuv.a
 			COMMAND ${CMAKE_COMMAND} -E rename ${CMAKE_INSTALL_PREFIX}/lib/libwebp_merged.a
 				${CMAKE_INSTALL_PREFIX}/lib/libwebp.a)
-	else()
+	elseif(WIN32)
 		find_program(LIB_EXE NAMES lib)
 		if(NOT LIB_EXE)
 			message(FATAL_ERROR "lib.exe not found; run this from a Visual Studio developer prompt")
@@ -219,6 +218,7 @@ if(BUILD_IMAGE_LIBS)
 		CMAKE_ARGS ${COMMON_ARGS} -DBUILD_SHARED_LIBS=OFF
 			-DLZ4_BUILD_CLI=OFF -DLZ4_BUILD_LEGACY_LZ4C=OFF
 		BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --parallel ${NPROCS}
+		INSTALL_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target install
 	)
 endif()
 
@@ -305,10 +305,17 @@ ExternalProject_Add(rapidyaml
 # only, the same as in the platform scripts: the Windows and macOS builds of the
 # core do not use it.
 if(UNIX AND NOT APPLE)
-	if(CMAKE_CROSSCOMPILING AND CMAKE_C_COMPILER_TARGET)
-		set(LIBBACKTRACE_HOST --host=${CMAKE_C_COMPILER_TARGET})
-	else()
-		set(LIBBACKTRACE_HOST "")
+	if(CMAKE_CROSSCOMPILING)
+		if(CMAKE_C_COMPILER_TARGET)
+			set(LIBBACKTRACE_HOST "--host=${CMAKE_C_COMPILER_TARGET}")
+		elseif(CMAKE_C_COMPILER)
+			execute_process(
+				COMMAND ${CMAKE_C_COMPILER} -dumpmachine
+				OUTPUT_VARIABLE LIBBACKTRACE_TARGET
+				OUTPUT_STRIP_TRAILING_WHITESPACE
+			)
+			set(LIBBACKTRACE_HOST "--host=${LIBBACKTRACE_TARGET}")
+		endif()
 	endif()
 
 	ExternalProject_Add(libbacktrace
