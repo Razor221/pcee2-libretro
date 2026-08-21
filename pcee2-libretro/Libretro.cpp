@@ -2123,8 +2123,28 @@ void retro_run(void)
 		// its VkImage to the frontend. The retro_vulkan_image storage must
 		// outlive this call (the frontend replays it for cached/duped frames).
 		VKLibretro::Frame frame;
-		auto* vulkan = static_cast<retro_hw_render_interface_vulkan*>(VKLibretro::GetHWRenderInterface());
-		if (vulkan && VKLibretro::ConsumeFrame(&frame))
+
+		// Ask the frontend for the interface every frame rather than trusting
+		// the pointer context_reset handed over. RetroArch rebuilds its video
+		// driver behind the core's back - toggling fullscreen (its F binding)
+		// does exactly that - and frees the retro_hw_render_interface_vulkan it
+		// gave us without calling context_destroy or context_reset, so the
+		// cached pointer becomes freed memory and calling set_image through it
+		// jumps into whatever now lives there.
+		retro_hw_render_interface* hw_iface = nullptr;
+		if (!s_environ_cb(RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE, &hw_iface) || !hw_iface ||
+			hw_iface->interface_type != RETRO_HW_RENDER_INTERFACE_VULKAN)
+		{
+			hw_iface = nullptr;
+		}
+		auto* vulkan = reinterpret_cast<retro_hw_render_interface_vulkan*>(hw_iface);
+
+		// Keep the GS thread's copy in step: it takes the frontend's queue lock
+		// through this same interface on every submit.
+		if (vulkan != VKLibretro::GetHWRenderInterface())
+			VKLibretro::SetHWRenderInterface(vulkan);
+
+		if (vulkan && vulkan->set_image && VKLibretro::ConsumeFrame(&frame))
 		{
 			s_hw_frame_seen = true;
 			// The GS present path sizes the canvas to the aspect-expanded merged

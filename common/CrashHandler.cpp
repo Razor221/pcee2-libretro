@@ -334,8 +334,28 @@ void CrashHandler::CrashSignalHandler(int signal, siginfo_t* siginfo, void* ctx)
 		void* const exception_pc = reinterpret_cast<void*>(static_cast<ucontext_t*>(ctx)->uc_mcontext.mc_rip);
 #elif defined(__x86_64__)
 		void* const exception_pc = reinterpret_cast<void*>(static_cast<ucontext_t*>(ctx)->uc_mcontext.gregs[REG_RIP]);
+#elif defined(__linux__) && defined(__aarch64__)
+		void* const exception_pc = reinterpret_cast<void*>(static_cast<ucontext_t*>(ctx)->uc_mcontext.pc);
 #else
 		void* const exception_pc = nullptr;
+#endif
+
+#if defined(__linux__) && defined(__aarch64__)
+		// Written before LogCallstack on purpose: that one buffers its whole
+		// report and flushes at the end, so a fault inside backtrace_full takes
+		// the report down with it and only the abort message escapes. These
+		// registers are the part worth having - lr is the return address of the
+		// call that faulted, and libbacktrace cannot unwind past the signal
+		// frame here anyway (it stops at the vdso trampoline).
+		{
+			const mcontext_t& mc = static_cast<ucontext_t*>(ctx)->uc_mcontext;
+			char regs[192];
+			const int len = std::snprintf(regs, sizeof(regs), "  fault=%p pc=%p lr=%p sp=%p\n",
+				siginfo ? siginfo->si_addr : nullptr, reinterpret_cast<void*>(mc.pc),
+				reinterpret_cast<void*>(mc.regs[30]), reinterpret_cast<void*>(mc.sp));
+			if (len > 0)
+				write(STDERR_FILENO, regs, static_cast<size_t>(len));
+		}
 #endif
 
 		LogCallstack(signal, exception_pc);
