@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "GS/Renderers/OpenGL/GLContext.h"
+#include "GS/Renderers/OpenGL/GLLibretro.h"
 
 #if defined(_WIN32)
 #include "GS/Renderers/OpenGL/GLContextWGL.h"
@@ -43,25 +44,37 @@ std::unique_ptr<GLContext> GLContext::Create(const WindowInfo& wi, Error* error)
 
 	std::unique_ptr<GLContext> context;
 	Error local_error;
+
+	// Libretro: the frontend owns the only context that can reach the screen,
+	// so the GS thread renders in one that shares its objects rather than one
+	// of its own -- see GLLibretro. Failing here is not fatal to the core, the
+	// caller falls back to the readback present path.
+	if (GLLibretro::Active)
+	{
+		context = GLLibretro::CreateSharedContext(wi, vlist, error);
+	}
+	else
+	{
 #if defined(_WIN32)
-	context = GLContextWGL::Create(wi, vlist, error);
+		context = GLContextWGL::Create(wi, vlist, error);
 #else // Linux
 #if defined(X11_API)
-	if (wi.type == WindowInfo::Type::X11)
-		context = GLContextEGLX11::Create(wi, vlist, error);
+		if (wi.type == WindowInfo::Type::X11)
+			context = GLContextEGLX11::Create(wi, vlist, error);
 #endif
 
 #if defined(WAYLAND_API)
-	if (wi.type == WindowInfo::Type::Wayland)
-		context = GLContextEGLWayland::Create(wi, vlist, error);
+		if (wi.type == WindowInfo::Type::Wayland)
+			context = GLContextEGLWayland::Create(wi, vlist, error);
 #endif
 
-	// headless/offscreen rendering (e.g. the libretro frontend): the base EGL
-	// context supports surfaceless via EGL_MESA_platform_surfaceless or a
-	// pbuffer fallback
-	if (wi.type == WindowInfo::Type::Surfaceless)
-		context = GLContextEGL::Create(wi, vlist, error);
+		// headless/offscreen rendering (e.g. the libretro frontend): the base EGL
+		// context supports surfaceless via EGL_MESA_platform_surfaceless or a
+		// pbuffer fallback
+		if (wi.type == WindowInfo::Type::Surfaceless)
+			context = GLContextEGL::Create(wi, vlist, error);
 #endif
+	}
 
 	if (!context)
 		return nullptr;

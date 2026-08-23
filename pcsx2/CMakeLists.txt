@@ -505,6 +505,7 @@ set(pcsx2GSSources
 	GS/Renderers/Common/GSDevice.cpp
 	GS/Renderers/Common/GSDirtyRect.cpp
 	GS/Renderers/Common/GSFunctionMap.cpp
+	GS/Renderers/Common/GSLibretro.cpp
 	GS/Renderers/Common/GSRenderer.cpp
 	GS/Renderers/Common/GSTexture.cpp
 	GS/Renderers/Common/GSVertexTrace.cpp
@@ -546,6 +547,7 @@ set(pcsx2GSHeaders
 	GS/Renderers/Common/GSDirtyRect.h
 	GS/Renderers/Common/GSFastList.h
 	GS/Renderers/Common/GSFunctionMap.h
+	GS/Renderers/Common/GSLibretro.h
 	GS/Renderers/Common/GSRenderer.h
 	GS/Renderers/Common/GSShaderEnums.h
 	GS/Renderers/Common/GSTexture.h
@@ -585,6 +587,7 @@ endif()
 if(USE_OPENGL)
 	list(APPEND pcsx2GSSources
 		GS/Renderers/OpenGL/GLContext.cpp
+		GS/Renderers/OpenGL/GLLibretro.cpp
 		GS/Renderers/OpenGL/GLProgram.cpp
 		GS/Renderers/OpenGL/GLShaderCache.cpp
 		GS/Renderers/OpenGL/GLState.cpp
@@ -594,6 +597,7 @@ if(USE_OPENGL)
 	)
 	list(APPEND pcsx2GSHeaders
 		GS/Renderers/OpenGL/GLContext.h
+		GS/Renderers/OpenGL/GLLibretro.h
 		GS/Renderers/OpenGL/GLProgram.h
 		GS/Renderers/OpenGL/GLShaderCache.h
 		GS/Renderers/OpenGL/GLState.h
@@ -621,6 +625,13 @@ if(USE_OPENGL)
 			list(APPEND pcsx2GSSources GS/Renderers/OpenGL/GLContextEGLX11.cpp)
 			list(APPEND pcsx2GSHeaders GS/Renderers/OpenGL/GLContextEGLX11.h)
 		endif()
+
+		# A libretro frontend on X11 hands the core a GLX context, and the only
+		# way to share objects with it is to create ours the same way. Nothing
+		# else in PCSX2 uses GLX; libGL is opened at runtime, so this needs no
+		# GLX headers and adds no link-time dependency either way.
+		list(APPEND pcsx2GSSources GS/Renderers/OpenGL/GLContextGLX.cpp)
+		list(APPEND pcsx2GSHeaders GS/Renderers/OpenGL/GLContextGLX.h)
 
 		if(WAYLAND_API)
 			list(APPEND pcsx2GSSources GS/Renderers/OpenGL/GLContextEGLWayland.cpp)

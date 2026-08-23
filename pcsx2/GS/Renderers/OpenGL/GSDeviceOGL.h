@@ -13,6 +13,8 @@
 
 #include "common/HashCombine.h"
 
+#include <array>
+
 class GLContext;
 
 class GSDepthStencilOGL
@@ -163,6 +165,33 @@ private:
 	GLuint m_fbo = 0; // frame buffer container
 	GLuint m_fbo_read = 0; // frame buffer container only for reading
 	GLuint m_fbo_write = 0;	// frame buffer container only for writing
+
+	// Libretro: there is no window to present into, so the present pass draws
+	// into one of these instead and hands it to the frontend. Rotated rather
+	// than reused, because the blit the frontend issues from its own context
+	// is not ordered against the GS thread's next frame.
+	static constexpr u32 kLibretroBackbuffers = 3;
+	std::array<std::unique_ptr<GSTextureOGL>, kLibretroBackbuffers> m_libretro_bb;
+	u32 m_libretro_bb_idx = 0;
+	bool m_context_released = false;
+
+public:
+	// Libretro: the frontend threw away the context this device's own context
+	// shares with, taking the EGL display -- and the driver state both live in
+	// -- with it. Give up the context: afterwards this device can only be
+	// destroyed, never drawn with.
+	//
+	// still_valid says whether the frontend has yet to do the deed, which is
+	// the difference between unbinding the context properly and not daring to
+	// touch it at all. The frontend does not reliably say (RetroArch never
+	// calls context_destroy for a GL core when it rebuilds its video driver),
+	// so both cases have to work.
+	//
+	// Returns whether the thread's binding was actually given up, and so
+	// whether a replacement device can be built on this thread at all.
+	bool AbandonContext(bool still_valid);
+
+private:
 
 	std::unique_ptr<GLStreamBuffer> m_texture_upload_buffer;
 

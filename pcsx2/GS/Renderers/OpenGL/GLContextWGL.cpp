@@ -42,6 +42,16 @@ GLContextWGL::GLContextWGL(const WindowInfo& wi)
 
 GLContextWGL::~GLContextWGL()
 {
+	if (m_abandoned)
+	{
+		m_rc = {};
+		m_dc = {};
+		m_pbuffer = {};
+		m_dummy_window = {};
+		m_dummy_dc = {};
+		return;
+	}
+
 	if (wglGetCurrentContext() == m_rc)
 		wglMakeCurrent(m_dc, nullptr);
 
@@ -130,6 +140,9 @@ void GLContextWGL::ResizeSurface(u32 new_surface_width /*= 0*/, u32 new_surface_
 
 bool GLContextWGL::SwapBuffers()
 {
+	if (m_abandoned)
+		return false;
+
 	return ::SwapBuffers(m_dc);
 }
 
@@ -140,6 +153,9 @@ bool GLContextWGL::IsCurrent()
 
 bool GLContextWGL::MakeCurrent()
 {
+	if (m_abandoned)
+		return false;
+
 	if (!wglMakeCurrent(m_dc, m_rc))
 	{
 		Console.ErrorFmt("wglMakeCurrent() failed: {}", GetLastError());
@@ -149,8 +165,19 @@ bool GLContextWGL::MakeCurrent()
 	return true;
 }
 
+bool GLContextWGL::ReleaseThread()
+{
+	// WGL has nothing that invalidates a context the way eglTerminate does, so
+	// the frontend dropping its own leaves this unbind valid.
+	wglMakeCurrent(nullptr, nullptr);
+	return true;
+}
+
 bool GLContextWGL::DoneCurrent()
 {
+	if (m_abandoned)
+		return true;
+
 	return wglMakeCurrent(m_dc, nullptr);
 }
 
@@ -165,6 +192,38 @@ bool GLContextWGL::SetSwapInterval(s32 interval)
 		return false;
 
 	return wglSwapIntervalEXT(interval);
+}
+
+HGLRC GLContextWGL::CaptureCurrentContext()
+{
+	return wglGetCurrentContext();
+}
+
+std::unique_ptr<GLContext> GLContextWGL::CreateShared(const WindowInfo& wi, HGLRC share_context,
+	std::span<const Version> versions_to_try, Error* error)
+{
+	std::unique_ptr<GLContextWGL> context = std::make_unique<GLContextWGL>(wi);
+
+	// Nothing is presented through this context, so it renders into a pbuffer
+	// rather than a window -- WGL has no surfaceless contexts.
+	if (!context->CreatePBuffer(error))
+		return nullptr;
+
+	// Made current on the calling thread, which is the GS thread that renders
+	// through it -- and the thread GLAD is loaded on, right after this returns.
+	for (const Version& cv : versions_to_try)
+	{
+		if (context->CreateVersionContext(cv, share_context, true, error))
+		{
+			Console.WriteLnFmt("WGL: Created a shared {}.{} context for the GS thread.",
+				cv.major_version, cv.minor_version);
+			context->m_version = cv;
+			return context;
+		}
+	}
+
+	Error::SetStringView(error, "Failed to create any shared WGL context version");
+	return nullptr;
 }
 
 std::unique_ptr<GLContext> GLContextWGL::CreateSharedContext(const WindowInfo& wi, Error* error)

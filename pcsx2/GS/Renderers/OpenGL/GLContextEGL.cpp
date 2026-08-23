@@ -89,6 +89,72 @@ std::unique_ptr<GLContext> GLContextEGL::Create(const WindowInfo& wi, std::span<
 	return context;
 }
 
+bool GLContextEGL::CaptureCurrentContext(EGLDisplay* display, EGLContext* context)
+{
+	// Runs before any GLContextEGL exists, so EGL has to be brought up by
+	// hand, and stays up: the handles handed back here outlive this call, and
+	// a frontend that cycles its context re-captures without reloading.
+	static bool s_capture_holds_egl = false;
+	if (!s_capture_holds_egl && !LoadEGL())
+	{
+		UnloadEGL(); // LoadEGL() counts the attempt even when it fails
+		return false;
+	}
+	const bool release_on_failure = !s_capture_holds_egl;
+	const auto fail = [&release_on_failure]() {
+		if (release_on_failure)
+			UnloadEGL();
+		return false;
+	};
+
+	Error load_error;
+	if (!LoadGLADEGL(EGL_NO_DISPLAY, &load_error))
+	{
+		Console.WarningFmt("EGL: {}", load_error.GetDescription());
+		return fail();
+	}
+
+	EGLDisplay current_display = eglGetCurrentDisplay();
+	EGLContext current_context = eglGetCurrentContext();
+	if (current_display == EGL_NO_DISPLAY || current_context == EGL_NO_CONTEXT)
+		return fail(); // nothing wrong here: the caller's context is a GLX or WGL one
+
+	// Re-load against the real display, so display extensions (surfaceless
+	// contexts in particular) are known before a context is created from it.
+	if (!LoadGLADEGL(current_display, &load_error))
+	{
+		Console.WarningFmt("EGL: {}", load_error.GetDescription());
+		return fail();
+	}
+
+	s_capture_holds_egl = true;
+	*display = current_display;
+	*context = current_context;
+	return true;
+}
+
+std::unique_ptr<GLContext> GLContextEGL::CreateShared(const WindowInfo& wi, EGLDisplay display,
+	EGLContext share_context, std::span<const Version> versions_to_try, Error* error)
+{
+	std::unique_ptr<GLContextEGL> context = std::make_unique<GLContextEGL>(wi);
+	context->m_display = display;
+
+	// Made current on the calling thread, which is the GS thread that renders
+	// through it -- and the thread GLAD is loaded on, right after this returns.
+	for (const Version& cv : versions_to_try)
+	{
+		if (context->CreateContextAndSurface(cv, share_context, true))
+		{
+			Console.WriteLnFmt("EGL: Created a shared {}.{} context for the GS thread.",
+				cv.major_version, cv.minor_version);
+			return context;
+		}
+	}
+
+	Error::SetStringView(error, "Failed to create any shared EGL context version");
+	return nullptr;
+}
+
 bool GLContextEGL::Initialize(std::span<const Version> versions_to_try, Error* error)
 {
 	if (!LoadGLADEGL(EGL_NO_DISPLAY, error))
@@ -293,6 +359,9 @@ void GLContextEGL::ResizeSurface(u32 new_surface_width /*= 0*/, u32 new_surface_
 
 bool GLContextEGL::SwapBuffers()
 {
+	if (m_abandoned)
+		return false;
+
 	return eglSwapBuffers(m_display, m_surface);
 }
 
@@ -303,6 +372,9 @@ bool GLContextEGL::IsCurrent()
 
 bool GLContextEGL::MakeCurrent()
 {
+	if (m_abandoned)
+		return false;
+
 	if (!eglMakeCurrent(m_display, m_surface, m_surface, m_context))
 	{
 		const EGLint err = eglGetError();
@@ -331,8 +403,27 @@ bool GLContextEGL::MakeCurrent()
 	return true;
 }
 
+bool GLContextEGL::ReleaseThread()
+{
+	// Nothing to offer here. Once the display this context belongs to has been
+	// terminated, every EGL entry point called from this thread blocks forever
+	// on a driver lock that is never handed back -- eglMakeCurrent and
+	// eglReleaseThread alike (measured on Mesa: the thread parks in a futex
+	// inside libgallium and never returns). eglReleaseThread is specified not
+	// to need a display, which makes it the one that ought to work, and it
+	// does not.
+	//
+	// So: say so, and let the caller decide. Anything else trades a black
+	// picture for a permanently stuck GS thread, which also hangs the frontend
+	// the next time it unloads the content.
+	return false;
+}
+
 bool GLContextEGL::DoneCurrent()
 {
+	if (m_abandoned)
+		return true;
+
 	return eglMakeCurrent(m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 }
 
@@ -435,6 +526,12 @@ bool GLContextEGL::CheckConfigSurfaceFormat(EGLConfig config)
 
 void GLContextEGL::DestroyContext()
 {
+	if (m_abandoned)
+	{
+		m_context = EGL_NO_CONTEXT;
+		return;
+	}
+
 	if (eglGetCurrentContext() == m_context)
 		eglMakeCurrent(m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 
@@ -447,6 +544,12 @@ void GLContextEGL::DestroyContext()
 
 void GLContextEGL::DestroySurface()
 {
+	if (m_abandoned)
+	{
+		m_surface = EGL_NO_SURFACE;
+		return;
+	}
+
 	if (eglGetCurrentSurface(EGL_DRAW) == m_surface)
 		eglMakeCurrent(m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 

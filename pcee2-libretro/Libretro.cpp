@@ -47,6 +47,7 @@
 #include "pcsx2/CDVD/CDVDcommon.h"
 #include "pcsx2/Config.h"
 #include "pcsx2/GS.h"
+#include "pcsx2/GS/GS.h"
 #include "pcsx2/Host/AudioStream.h"
 #include "pcsx2/SIO/Pad/PadDualshock2.h"
 #include "pcsx2/SPU2/spu2.h"
@@ -56,9 +57,15 @@
 #include "pcsx2/ImGui/ImGuiFullscreen.h"
 #include "pcsx2/ImGui/ImGuiManager.h"
 #include "pcsx2/Input/InputManager.h"
+#include "pcsx2/GS/Renderers/Common/GSLibretro.h"
 #include "pcsx2/GS/Renderers/Vulkan/GSDeviceVK.h"
 #include "pcsx2/GS/Renderers/Vulkan/VKLibretro.h"
 #include "pcsx2/GS/Renderers/Vulkan/VKLoader.h"
+#ifdef ENABLE_OPENGL
+#include "pcsx2/GS/Renderers/OpenGL/GLLibretro.h"
+#include "pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.h"
+#include "glad/gl.h"
+#endif
 #include "pcsx2/MTGS.h"
 #include "pcsx2/MTVU.h"
 #include "pcsx2/MemoryTypes.h"
@@ -131,13 +138,26 @@ namespace LibretroHost
 	static u32 s_frame_width = 0;
 	static u32 s_frame_height = 0;
 
-	// Zero-copy Vulkan HW-render present path (ported from yaps2): the GS shares
-	// the frontend's VkDevice (context negotiation) and hands the rendered
-	// VkImage straight to the frontend via set_image, instead of the GPU->CPU
-	// readback path above. Selected at retro_load_game; the readback path stays
-	// as a fallback (renderer != Vulkan, frontend refuses HW render, or the
-	// PCEE2_READBACK=1 env override for A/B testing).
-	static bool s_hw_render_vulkan = false;
+	// Zero-copy HW-render present paths: instead of the GPU->CPU readback above,
+	// the GS renders into something the frontend can read directly.
+	//  - Vulkan (ported from yaps2): the GS shares the frontend's VkDevice
+	//    through context negotiation and hands the rendered VkImage straight
+	//    over via set_image.
+	//  - OpenGL: the GS thread renders in a context sharing the frontend's
+	//    objects, and retro_run blits the finished texture into the frontend's
+	//    framebuffer (see GLLibretro).
+	// Selected at retro_load_game from the renderer option; the readback path
+	// stays as the fallback (software renderer, frontend refuses HW render, the
+	// frontend's GL context can't be shared, or the PCEE2_READBACK=1 env
+	// override for A/B testing).
+	enum class HWRender
+	{
+		None,
+		Vulkan,
+		OpenGL,
+	};
+	static HWRender s_hw_render = HWRender::None;
+	static bool HWRenderActive() { return s_hw_render != HWRender::None; }
 	// Set by the frontend's context_reset once the retro_hw_render_interface is
 	// available; the CPU thread parks on it before booting the VM so GSDeviceVK
 	// adopts the shared instance during negotiation rather than creating its own.
@@ -145,6 +165,27 @@ namespace LibretroHost
 	// Raised once CPUThreadInitialize() has run, so the frontend's negotiation
 	// callback (which opens MTGS) doesn't race the CPU-thread global setup.
 	static std::atomic<bool> s_cpu_thread_initialized{false};
+#ifdef ENABLE_OPENGL
+	// The GL render callback outlives retro_load_game: retro_run calls
+	// get_current_framebuffer() through it on every presented frame.
+	static struct retro_hw_render_callback s_gl_hw_render = {};
+	// Read framebuffer used to blit the GS's texture into the frontend's, on
+	// the frontend's thread. FBOs are not shared between contexts, so this one
+	// belongs to the frontend's context and dies with it.
+	static GLuint s_gl_present_fbo = 0;
+	// Set once a frontend GL context has been captured, so a second
+	// context_reset can be told apart from the first: the second means the
+	// frontend threw its context away and everything the GS built is orphaned.
+	static bool s_gl_context_seen = false;
+	// Raised by context_reset when that has happened, and acted on by
+	// retro_run. See OnGLContextReset for why it cannot be acted on in place.
+	static std::atomic<bool> s_gl_needs_reopen{false};
+#endif
+
+	// Last geometry announced to the frontend on a HW-render path.
+	static u32 s_hw_geom_width = 0;
+	static u32 s_hw_geom_height = 0;
+
 	// HW-render counterpart of "s_frame_width != 0": the readback callback that
 	// used to set s_frame_width isn't wired in HW mode, so UpdateInput's
 	// VM-is-up gate needs this instead. Only touched on the retro_run thread.
@@ -553,11 +594,18 @@ void LibretroHost::RegisterCoreOptions()
 		{"pcsx2_fast_boot", "Fast Boot", nullptr, "Skip the BIOS boot animation. Requires restart.", nullptr,
 			"system", {{"enabled", nullptr}, {"disabled", nullptr}, {nullptr, nullptr}}, "enabled"},
 		// graphics
+		// Offering an API this build has no renderer for would leave GSCreateDevice
+		// with nothing to construct (Android turns OpenGL off entirely), so the
+		// list only carries what is actually compiled in.
 		{"pcsx2_renderer", "Renderer", nullptr,
-			"Hardware renderer API, or the software renderer. Applies on the fly.",
+			"Hardware renderer API, or the software renderer. Switching to or from Software applies "
+			"on the fly; switching between hardware APIs takes effect when the content is restarted.",
 			nullptr, "graphics",
-			{{"vulkan", "Vulkan (Hardware)"}, {"opengl", "OpenGL (Hardware)"}, {"software", "Software"},
-				{nullptr, nullptr}},
+			{{"vulkan", "Vulkan (Hardware)"},
+#ifdef ENABLE_OPENGL
+				{"opengl", "OpenGL (Hardware)"},
+#endif
+				{"software", "Software"}, {nullptr, nullptr}},
 			"vulkan"},
 		{"pcsx2_upscale_multiplier", "Internal Resolution", nullptr,
 			"Internal rendering resolution multiplier for the hardware renderer. Also scales the output framebuffer. Applies on the fly.",
@@ -763,8 +811,34 @@ void LibretroHost::ReadCoreOptions(bool startup)
 	GSRendererType renderer_type = GSRendererType::VK;
 	if (std::strcmp(renderer, "software") == 0)
 		renderer_type = GSRendererType::SW;
+#ifdef ENABLE_OPENGL
 	else if (std::strcmp(renderer, "opengl") == 0)
 		renderer_type = GSRendererType::OGL;
+#endif
+
+	// The frontend's HW-render context type is negotiated once, when the
+	// content loads, and cannot change under a running session — so on a
+	// HW-render path the graphics API is fixed for the session even though the
+	// option can still be changed. Switching to and from the software renderer
+	// stays live: it presents through whichever device is already up.
+	if (HWRenderActive() && renderer_type != GSRendererType::SW)
+	{
+		const GSRendererType hw_type =
+			(s_hw_render == HWRender::Vulkan) ? GSRendererType::VK : GSRendererType::OGL;
+		if (renderer_type != hw_type)
+		{
+			static bool warned = false;
+			if (!warned)
+			{
+				warned = true;
+				Console.WarningFmt("Renderer API can only be changed by restarting the content; "
+								   "staying on {}.",
+					(hw_type == GSRendererType::VK) ? "Vulkan" : "OpenGL");
+			}
+			renderer_type = hw_type;
+		}
+	}
+
 	s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", static_cast<int>(renderer_type));
 
 	const u32 upscale = std::clamp<u32>(StringUtil::FromChars<u32>(get_option("pcsx2_upscale_multiplier", "1")).value_or(1), 1, MAX_UPSCALE);
@@ -772,9 +846,9 @@ void LibretroHost::ReadCoreOptions(bool startup)
 	s_opt_upscale = upscale;
 	s_out_width.store(DEFAULT_WIDTH * upscale, std::memory_order_release);
 	s_out_height.store(DEFAULT_HEIGHT * upscale, std::memory_order_release);
-	// The Vulkan HW-render path presents by sharing the GS VkImage (set_image);
-	// only wire the GPU->CPU readback when we're actually on the readback path.
-	if (!s_hw_render_vulkan)
+	// The HW-render paths hand the frontend the rendered image directly; only
+	// wire the GPU->CPU readback when we're actually on the readback path.
+	if (!HWRenderActive())
 		GSSetFramebufferReadback(&FramebufferReadbackCallback, DEFAULT_WIDTH * upscale, DEFAULT_HEIGHT * upscale);
 
 	// graphics quality
@@ -997,10 +1071,12 @@ void LibretroHost::CPUThreadMain()
 			s_boot_requested = false;
 		}
 
-		// Vulkan HW render: the frontend's context negotiation opens MTGS
-		// (GSDeviceVK adopts the shared instance) and then fires context_reset.
-		// Booting the VM before that would open the GS against our own instance.
-		while (init_ok && s_hw_render_vulkan && !s_context_ready.load(std::memory_order_acquire) &&
+		// HW render: the GS can only open once the frontend's context exists —
+		// on Vulkan its context negotiation opens MTGS itself (GSDeviceVK adopts
+		// the shared instance) and then fires context_reset; on GL context_reset
+		// is where the frontend's context gets captured to share from. Booting
+		// the VM before that would open the GS against a context of our own.
+		while (init_ok && HWRenderActive() && !s_context_ready.load(std::memory_order_acquire) &&
 			s_running.load(std::memory_order_acquire))
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
@@ -1180,6 +1256,96 @@ static void OnContextDestroy(void)
 	VKLibretro::SetHWRenderInterface(nullptr);
 }
 
+#ifdef ENABLE_OPENGL
+//////////////////////////////////////////////////////////////////////////
+// OpenGL context handoff.
+//
+// There is no retro_hw_render_interface for GL to ask the frontend for: its
+// context_reset, running on the frontend thread with the context current, is
+// the only moment the core can see that context at all. Grab it there; the GS
+// thread then builds a context sharing its objects (GLLibretro) and the CPU
+// thread is released to boot the VM against it.
+//////////////////////////////////////////////////////////////////////////
+
+static void OnGLContextReset(void)
+{
+	Error error;
+	if (!GLLibretro::CaptureFrontendContext(&error))
+	{
+		// Nothing to share from, so drop to the readback path: the GL device
+		// will bring up a surfaceless context of its own and the frame comes
+		// back through the CPU. Slower, but it boots — leaving s_context_ready
+		// clear here would park the CPU thread on a context that never arrives.
+		Console.ErrorFmt("Failed to capture the frontend's GL context: {}", error.GetDescription());
+		Console.Error("  Falling back to the readback present path.");
+		GLLibretro::Active = false;
+		s_hw_render = HWRender::None;
+		GSLibretro::Active = false;
+		GSSetFramebufferReadback(
+			&FramebufferReadbackCallback, DEFAULT_WIDTH * s_opt_upscale, DEFAULT_HEIGHT * s_opt_upscale);
+		s_context_ready.store(true, std::memory_order_release);
+		return;
+	}
+
+	// Second time through: the frontend destroyed its context and built a new
+	// one (its fullscreen toggle does exactly that), so every GL object the GS
+	// holds belongs to a share group nothing can reach any more. The device has
+	// to be rebuilt against the new context — but NOT from here.
+	//
+	// This callback runs part-way through the frontend rebuilding its video
+	// driver, with its thread inside EGL. Recreating the device means the GS
+	// thread calls eglMakeCurrent to drop its old context, which blocks on the
+	// same driver-wide lock the frontend thread is holding; waiting here for
+	// the GS thread to finish therefore deadlocks the two against each other
+	// (observed: GS thread parked in GLContextEGL::DoneCurrent, frontend parked
+	// in this callback). Flag it instead and let retro_run do the work, once
+	// the frontend is back in its normal frame loop and out of EGL.
+	if (s_gl_context_seen)
+		s_gl_needs_reopen.store(true, std::memory_order_release);
+
+	s_gl_context_seen = true;
+	s_gl_present_fbo = 0;
+
+	s_context_ready.store(true, std::memory_order_release);
+}
+
+static void OnGLContextDestroy(void)
+{
+	// Runs on the frontend thread, before the frontend destroys its context,
+	// while the GS thread keeps going. Stop the handoff first so the GS thread
+	// can't park waiting for a retro_run that is not coming, then have it let
+	// go of its own context.
+	//
+	// That last part has to happen HERE, and not when the device is torn down
+	// later. The GS thread's context shares an EGL display with the frontend's,
+	// and the frontend ends by calling eglTerminate on it — after which every
+	// handle the GS thread holds points into freed driver state, and simply
+	// unbinding the context segfaults inside Mesa (observed: SIGSEGV in
+	// eglMakeCurrent, from GSDeviceOGL::Destroy). This is the last moment those
+	// handles are still good.
+	GLLibretro::AbortPacing();
+	s_context_ready.store(false, std::memory_order_release);
+	if (MTGS::IsOpen())
+	{
+		std::atomic_bool gs_released{false};
+		MTGS::RunOnGSThread([&gs_released]() {
+			if (g_gs_device && g_gs_device->GetRenderAPI() == RenderAPI::OpenGL)
+				static_cast<GSDeviceOGL*>(g_gs_device.get())->AbandonContext(true);
+			gs_released.store(true, std::memory_order_release);
+		});
+		for (int i = 0; i < 2000 && !gs_released.load(std::memory_order_acquire); i++)
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		if (!gs_released.load(std::memory_order_acquire))
+			Console.Error("GL: The GS thread did not let go of its context in time.");
+	}
+
+	// The FBO went with the context; a new one gets made against whatever
+	// context_reset hands over next.
+	s_gl_present_fbo = 0;
+	GLLibretro::ReleaseFrontendContext();
+}
+#endif // ENABLE_OPENGL
+
 //////////////////////////////////////////////////////////////////////////
 // libretro entry points
 //////////////////////////////////////////////////////////////////////////
@@ -1232,10 +1398,10 @@ void retro_get_system_av_info(struct retro_system_av_info* info)
 	std::memset(info, 0, sizeof(*info));
 	info->geometry.base_width = s_out_width.load(std::memory_order_acquire);
 	info->geometry.base_height = s_out_height.load(std::memory_order_acquire);
-	// The Vulkan HW-render canvas is aspect-expanded and can exceed the plain
-	// upscale rectangle, so advertise the frontend the larger backbuffer bound.
-	info->geometry.max_width = s_hw_render_vulkan ? VKLibretro::kMaxCanvasWidth : MAX_WIDTH;
-	info->geometry.max_height = s_hw_render_vulkan ? VKLibretro::kMaxCanvasHeight : MAX_HEIGHT;
+	// The HW-render canvas is aspect-expanded and can exceed the plain upscale
+	// rectangle, so advertise the frontend the larger backbuffer bound.
+	info->geometry.max_width = HWRenderActive() ? GSLibretro::kMaxCanvasWidth : MAX_WIDTH;
+	info->geometry.max_height = HWRenderActive() ? GSLibretro::kMaxCanvasHeight : MAX_HEIGHT;
 	const u32 aspect_bits = s_aspect_bits.load(std::memory_order_acquire);
 	info->geometry.aspect_ratio = aspect_bits ? std::bit_cast<float>(aspect_bits) : (4.0f / 3.0f);
 	info->timing.fps = static_cast<double>(fps);
@@ -1695,16 +1861,33 @@ bool retro_load_game(const struct retro_game_info* game)
 		return false;
 
 	// Decide the present path before SettingsOverride (which wires the readback
-	// callback only when we're NOT sharing the GS VkImage). HW render needs the
-	// Vulkan renderer; PCEE2_READBACK=1 forces the legacy readback path for A/B.
+	// callback only when we're NOT on a HW-render path). Which one we get
+	// follows the renderer the user picked in the frontend; the software
+	// renderer has nothing on the GPU to hand over, and PCEE2_READBACK=1 forces
+	// the readback path for A/B testing.
 	{
 		retro_variable var = {"pcsx2_renderer", nullptr};
-		const bool renderer_is_vulkan = !s_environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) || !var.value ||
-			std::strcmp(var.value, "vulkan") == 0;
-		s_hw_render_vulkan = renderer_is_vulkan && !std::getenv("PCEE2_READBACK");
+		const char* const renderer =
+			(s_environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) ? var.value : "vulkan";
+		if (std::getenv("PCEE2_READBACK"))
+			s_hw_render = HWRender::None;
+		else if (std::strcmp(renderer, "opengl") == 0)
+			s_hw_render = HWRender::OpenGL;
+		else if (std::strcmp(renderer, "software") != 0)
+			s_hw_render = HWRender::Vulkan;
 	}
 
-	if (s_hw_render_vulkan)
+#ifndef ENABLE_OPENGL
+	if (s_hw_render == HWRender::OpenGL)
+	{
+		// The renderer option offers OpenGL only where it was built in, so this
+		// means a stale option value from a build that had it.
+		Console.Warning("This build has no OpenGL renderer; falling back to readback present.");
+		s_hw_render = HWRender::None;
+	}
+#endif
+
+	if (s_hw_render == HWRender::Vulkan)
 	{
 		static struct retro_hw_render_callback hw_render = {};
 		hw_render.context_type = RETRO_HW_CONTEXT_VULKAN;
@@ -1716,7 +1899,7 @@ bool retro_load_game(const struct retro_game_info* game)
 		if (!s_environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render))
 		{
 			Console.Warning("Frontend refused Vulkan HW context; falling back to readback present.");
-			s_hw_render_vulkan = false;
+			s_hw_render = HWRender::None;
 		}
 		else
 		{
@@ -1740,6 +1923,44 @@ bool retro_load_game(const struct retro_game_info* game)
 			s_context_ready.store(false, std::memory_order_release);
 		}
 	}
+#ifdef ENABLE_OPENGL
+	else if (s_hw_render == HWRender::OpenGL)
+	{
+		// A shared context is the whole basis of the GL path: the GS thread
+		// needs a context of its own, and the only way to get one that can
+		// hand textures to the frontend is for the frontend's context to be
+		// shareable in the first place.
+		if (!s_environ_cb(RETRO_ENVIRONMENT_SET_HW_SHARED_CONTEXT, nullptr))
+			Console.Warning("Frontend does not advertise shared HW contexts; trying anyway.");
+
+		s_gl_hw_render = {};
+		s_gl_hw_render.context_type = RETRO_HW_CONTEXT_OPENGL_CORE;
+		s_gl_hw_render.version_major = 3;
+		s_gl_hw_render.version_minor = 3;
+		s_gl_hw_render.context_reset = OnGLContextReset;
+		s_gl_hw_render.context_destroy = OnGLContextDestroy;
+		// The GS renders into a texture and retro_run blits it; the frontend's
+		// framebuffer never needs a depth or stencil attachment of its own.
+		s_gl_hw_render.depth = false;
+		s_gl_hw_render.stencil = false;
+		s_gl_hw_render.bottom_left_origin = true;
+		s_gl_hw_render.cache_context = true;
+		if (!s_environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &s_gl_hw_render))
+		{
+			Console.Warning("Frontend refused an OpenGL 3.3 core HW context; falling back to readback present.");
+			s_hw_render = HWRender::None;
+		}
+		else
+		{
+			GLLibretro::Active = true;
+			s_context_ready.store(false, std::memory_order_release);
+		}
+	}
+#endif
+
+	// Tells the present path there is no window behind it, whichever API ends
+	// up driving it.
+	GSLibretro::Active = HWRenderActive();
 
 	ReadCoreOptions(true);
 	SettingsOverride();
@@ -1778,8 +1999,10 @@ bool retro_load_game(const struct retro_game_info* game)
 
 	// The frontend calls the negotiation create_device (which opens MTGS) after
 	// this returns; it depends on CPUThreadInitialize having run. Wait for it so
-	// the two threads don't race on the CPU-thread global setup.
-	if (s_hw_render_vulkan)
+	// the two threads don't race on the CPU-thread global setup. (GL has no
+	// negotiation step: its context_reset only captures the context, and the
+	// CPU thread opens MTGS itself once it sees that happen.)
+	if (s_hw_render == HWRender::Vulkan)
 	{
 		while (!s_cpu_thread_initialized.load(std::memory_order_acquire))
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -1801,7 +2024,7 @@ void retro_unload_game(void)
 	// duped frames) — retract it and wait for the GPU before the VM teardown
 	// below destroys the textures it points at. Abort pacing first so the GS
 	// thread can't stay parked in PublishFrame.
-	if (s_hw_render_vulkan)
+	if (s_hw_render == HWRender::Vulkan)
 	{
 		VKLibretro::AbortPacing();
 		if (auto* vulkan = static_cast<retro_hw_render_interface_vulkan*>(VKLibretro::GetHWRenderInterface()))
@@ -1810,6 +2033,15 @@ void retro_unload_game(void)
 			vulkan->wait_sync_index(vulkan->handle);
 		}
 	}
+#ifdef ENABLE_OPENGL
+	// GL hands over a texture retro_run copies out of, so there is nothing for
+	// the frontend to keep replaying — just stop the handoff before the VM
+	// teardown deletes the textures the last published frame points at.
+	else if (s_hw_render == HWRender::OpenGL)
+	{
+		GLLibretro::AbortPacing();
+	}
+#endif
 
 	s_running.store(false, std::memory_order_release);
 	if (VMManager::HasValidVM())
@@ -1830,15 +2062,30 @@ void retro_unload_game(void)
 	}
 
 	s_audio_stream = nullptr;
-	if (!s_hw_render_vulkan)
+	if (!HWRenderActive())
 		GSSetFramebufferReadback(nullptr, 0, 0);
-	if (s_hw_render_vulkan)
+	if (s_hw_render == HWRender::Vulkan)
 	{
 		VKLibretro::Shutdown();
 		VKLibretro::Active = false;
-		s_hw_render_vulkan = false;
+	}
+#ifdef ENABLE_OPENGL
+	else if (s_hw_render == HWRender::OpenGL)
+	{
+		GLLibretro::Shutdown();
+		GLLibretro::Active = false;
+		s_gl_context_seen = false;
+		s_gl_present_fbo = 0;
+	}
+#endif
+	if (HWRenderActive())
+	{
+		s_hw_render = HWRender::None;
 		s_context_ready.store(false, std::memory_order_release);
 	}
+	GSLibretro::Active = false;
+	s_hw_geom_width = 0;
+	s_hw_geom_height = 0;
 	s_memory_map_sent = false;
 }
 
@@ -2030,7 +2277,7 @@ static void UpdateAVInfoIfChanged()
 	const float last_fps = last_fps_bits ? std::bit_cast<float>(last_fps_bits) : 59.94f;
 	const bool timing_changed = std::abs(fps - last_fps) > 0.25f || sample_rate != last_sample_rate;
 	const bool geometry_changed = width != last_width || height != last_height || aspect_bits != last_aspect_bits;
-	if (!timing_changed && (s_hw_render_vulkan || !geometry_changed))
+	if (!timing_changed && (HWRenderActive() || !geometry_changed))
 		return;
 
 	// don't announce anything until the VM has reported a real frame rate
@@ -2045,9 +2292,9 @@ static void UpdateAVInfoIfChanged()
 
 	// The frontend's video reinit runs inside this environment call while the
 	// GS thread may still be chewing queued work that submits to the shared
-	// Vulkan queue — drain it first so the reinit doesn't race those submits.
-	// (The CPU thread is parked here: retro_run hasn't posted its run token.)
-	if (s_hw_render_vulkan && MTGS::IsOpen())
+	// queue — drain it first so the reinit doesn't race those submits. (The CPU
+	// thread is parked here: retro_run hasn't posted its run token.)
+	if (HWRenderActive() && MTGS::IsOpen())
 	{
 		std::atomic_bool gs_drained{false};
 		MTGS::RunOnGSThread([&gs_drained]() { gs_drained.store(true, std::memory_order_release); });
@@ -2060,6 +2307,27 @@ static void UpdateAVInfoIfChanged()
 	s_environ_cb(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av_info);
 	INFO_LOG("libretro av_info: {}x{} @ {:.2f}Hz, {}Hz audio", av_info.geometry.base_width,
 		av_info.geometry.base_height, av_info.timing.fps, sample_rate);
+}
+
+// The GS present path sizes its canvas to the aspect-expanded merged frame, so
+// the canvas tracks the internal resolution rather than a fixed output size.
+// Keep the frontend's geometry in step with it so scaling stays correct.
+static void SyncHWRenderGeometry(u32 width, u32 height)
+{
+	if (width == s_hw_geom_width && height == s_hw_geom_height)
+		return;
+
+	s_hw_geom_width = width;
+	s_hw_geom_height = height;
+
+	retro_game_geometry geometry = {};
+	geometry.base_width = width;
+	geometry.base_height = height;
+	geometry.max_width = GSLibretro::kMaxCanvasWidth;
+	geometry.max_height = GSLibretro::kMaxCanvasHeight;
+	// The canvas is already aspect-corrected; display it 1:1.
+	geometry.aspect_ratio = static_cast<float>(width) / static_cast<float>(height);
+	s_environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &geometry);
 }
 
 void retro_run(void)
@@ -2109,6 +2377,65 @@ void retro_run(void)
 		return;
 	}
 
+#ifdef ENABLE_OPENGL
+	// The frontend replaced its GL context (see OnGLContextReset): every object
+	// the GS device holds belongs to a share group that no longer exists, so
+	// rebuild it against the new one. Deliberately here rather than in
+	// context_reset — by now the frontend is out of EGL, so the GS thread can
+	// swap contexts without blocking against it — and before the run token
+	// below, so the CPU thread is still parked and this is the only thing
+	// writing to the GS ring.
+	if (s_gl_needs_reopen.load(std::memory_order_acquire))
+	{
+		s_gl_needs_reopen.store(false, std::memory_order_release);
+		if (MTGS::IsOpen())
+		{
+			// -1 still running, 0 the GS thread cannot take a new context, 1 done.
+			std::atomic<int> result{-1};
+			MTGS::RunOnGSThread([&result]() {
+				// Normally already done from context_destroy — but RetroArch
+				// never calls it for a GL core when it rebuilds its video
+				// driver (the same going-behind-the-core's-back the Vulkan path
+				// works around by re-fetching its interface every frame), so
+				// this is usually the first the GS thread hears of it, with the
+				// context already dead.
+				auto* dev = (g_gs_device && g_gs_device->GetRenderAPI() == RenderAPI::OpenGL) ?
+					static_cast<GSDeviceOGL*>(g_gs_device.get()) : nullptr;
+				if (dev && !dev->AbandonContext(false))
+				{
+					result.store(0, std::memory_order_release);
+					return;
+				}
+
+				GSreopen(true, false, GSConfig.Renderer, std::nullopt);
+				result.store(1, std::memory_order_release);
+			});
+
+			for (int i = 0; i < 5000 && result.load(std::memory_order_acquire) < 0; i++)
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+			if (result.load(std::memory_order_acquire) == 0)
+			{
+				// Not a failure we can retry: this GS thread can never be given
+				// another context, and building one anyway parks it inside the
+				// driver for good, which would also hang the frontend the next
+				// time it unloads the content. Leave the picture where it is
+				// and say what fixes it.
+				Console.Error("GL: The frontend replaced its context without announcing it, and the "
+							  "old one cannot be released. Reload the content to get the picture back.");
+				Host::AddKeyedOSDMessage("GLContextLost",
+					TRANSLATE_STR("GS", "The video output was reset. Reload the content to resume, or "
+									   "switch to the Vulkan renderer."),
+					Host::OSD_CRITICAL_ERROR_DURATION);
+			}
+			else if (result.load(std::memory_order_acquire) < 0)
+			{
+				Console.Error("GL: The GS device did not come back; the picture will stay black.");
+			}
+		}
+	}
+#endif
+
 	// hand the CPU thread one frame of execution, wait for the result
 	std::unique_lock lock(s_frame_mutex);
 	s_run_token = true;
@@ -2117,7 +2444,7 @@ void retro_run(void)
 	const bool got_frame = s_frame_cv.wait_for(lock, std::chrono::milliseconds(200), []() { return s_frame_ready; });
 	s_frame_ready = false;
 
-	if (s_hw_render_vulkan)
+	if (s_hw_render == HWRender::Vulkan)
 	{
 		// Zero-copy present: consume the frame the GS just published and hand
 		// its VkImage to the frontend. The retro_vulkan_image storage must
@@ -2147,23 +2474,7 @@ void retro_run(void)
 		if (vulkan && vulkan->set_image && VKLibretro::ConsumeFrame(&frame))
 		{
 			s_hw_frame_seen = true;
-			// The GS present path sizes the canvas to the aspect-expanded merged
-			// frame, so it tracks the internal resolution — keep the frontend's
-			// geometry in sync so scaling stays correct.
-			static u32 last_geom_w = 0, last_geom_h = 0;
-			if (frame.width != last_geom_w || frame.height != last_geom_h)
-			{
-				last_geom_w = frame.width;
-				last_geom_h = frame.height;
-				retro_game_geometry geometry = {};
-				geometry.base_width = frame.width;
-				geometry.base_height = frame.height;
-				geometry.max_width = VKLibretro::kMaxCanvasWidth;
-				geometry.max_height = VKLibretro::kMaxCanvasHeight;
-				// The canvas is already aspect-corrected; display it 1:1.
-				geometry.aspect_ratio = static_cast<float>(frame.width) / static_cast<float>(frame.height);
-				s_environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &geometry);
-			}
+			SyncHWRenderGeometry(frame.width, frame.height);
 			static retro_vulkan_image vkimage;
 			vkimage = {};
 			vkimage.image_view = frame.view;
@@ -2184,6 +2495,61 @@ void retro_run(void)
 				s_frame_height ? s_frame_height : DEFAULT_HEIGHT, 0);
 		}
 	}
+#ifdef ENABLE_OPENGL
+	else if (s_hw_render == HWRender::OpenGL)
+	{
+		// The frontend's context is current on this thread and the GS thread's
+		// context shares its objects, so the texture the GS just published can
+		// be read straight into the frontend's framebuffer.
+		GLLibretro::Frame frame;
+		if (s_gl_hw_render.get_current_framebuffer && GLLibretro::ConsumeFrame(&frame))
+		{
+			s_hw_frame_seen = true;
+			SyncHWRenderGeometry(frame.width, frame.height);
+
+			// Sharing objects does not share ordering: the fence is what says
+			// the GS thread's rendering has actually landed, rather than just
+			// been queued. Waiting on the server side costs this thread
+			// nothing — the blit below is what ends up waiting.
+			if (frame.fence)
+			{
+				glWaitSync(frame.fence, 0, GL_TIMEOUT_IGNORED);
+				glDeleteSync(frame.fence);
+			}
+
+			if (s_gl_present_fbo == 0)
+				glGenFramebuffers(1, &s_gl_present_fbo);
+
+			const GLuint target_fbo = static_cast<GLuint>(s_gl_hw_render.get_current_framebuffer());
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, s_gl_present_fbo);
+			glFramebufferTexture2D(
+				GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, frame.texture, 0);
+			glReadBuffer(GL_COLOR_ATTACHMENT0);
+			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, target_fbo);
+
+			// A blit is masked by both of these, and this context is shared
+			// with the GS thread's — whatever either side last set is still
+			// set, so say what this one needs rather than assuming.
+			glDisable(GL_SCISSOR_TEST);
+			glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+			glBlitFramebuffer(0, 0, frame.width, frame.height, 0, 0, frame.width, frame.height,
+				GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+			// hw_render.bottom_left_origin is set, so the frontend reads the
+			// lower-left frame.width x frame.height of its framebuffer — which
+			// is exactly where a GL blit to (0,0) lands.
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, target_fbo);
+			if (s_video_cb)
+				s_video_cb(RETRO_HW_FRAME_BUFFER_VALID, frame.width, frame.height, 0);
+		}
+		else if (s_video_cb)
+		{
+			// nothing new (still booting, or a duplicate frame) — dupe
+			s_video_cb(nullptr, s_frame_width ? s_frame_width : DEFAULT_WIDTH,
+				s_frame_height ? s_frame_height : DEFAULT_HEIGHT, 0);
+		}
+	}
+#endif
 	else if (got_frame && s_frame_width > 0 && s_frame_height > 0 && s_video_cb)
 	{
 		s_video_cb(s_frame_pixels.data(), s_frame_width, s_frame_height, s_frame_width * sizeof(u32));

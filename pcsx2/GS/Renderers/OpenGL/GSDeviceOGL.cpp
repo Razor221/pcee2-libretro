@@ -3,6 +3,7 @@
 
 #include "GS/Renderers/OpenGL/GLContext.h"
 #include "GS/Renderers/OpenGL/GSDeviceOGL.h"
+#include "GS/Renderers/OpenGL/GLLibretro.h"
 #include "GS/Renderers/OpenGL/GLState.h"
 #include "GS/GSState.h"
 #include "GS/GSGL.h"
@@ -669,6 +670,36 @@ bool GSDeviceOGL::Create(GSVSyncMode vsync_mode, bool allow_present_throttle)
 	return true;
 }
 
+bool GSDeviceOGL::AbandonContext(bool still_valid)
+{
+	if (!m_gl_context)
+		return false;
+	if (m_gl_context->IsAbandoned())
+		return m_context_released;
+
+	GLLibretro::AbortPacing();
+
+	if (still_valid)
+	{
+		// Retire what is already queued while the context can still run it,
+		// then unbind it, so the teardown that follows runs with no context
+		// current and its GL calls go nowhere.
+		glFinish();
+		m_gl_context->DoneCurrent();
+		m_context_released = true;
+	}
+	else
+	{
+		// The display is already gone, so the ordinary unbind — which needs it
+		// — is the call that hangs inside the driver. Ask the platform whether
+		// it has any way to let go from here; on EGL it has none.
+		m_context_released = m_gl_context->ReleaseThread();
+	}
+
+	m_gl_context->Abandon();
+	return m_context_released;
+}
+
 void GSDeviceOGL::Destroy()
 {
 	GSDevice::Destroy();
@@ -940,6 +971,13 @@ void GSDeviceOGL::DestroyResources()
 {
 	m_shader_cache.Close();
 
+	// Before anything else: the frontend may still be holding the last
+	// published texture, so stop handing it new ones first.
+	GLLibretro::AbortPacing();
+	for (std::unique_ptr<GSTextureOGL>& bb : m_libretro_bb)
+		bb.reset();
+	m_libretro_bb_idx = 0;
+
 	if (m_palette_ss != 0)
 		glDeleteSamplers(1, &m_palette_ss);
 
@@ -1048,6 +1086,17 @@ bool GSDeviceOGL::UpdateWindow()
 
 void GSDeviceOGL::ResizeWindow(u32 new_window_width, u32 new_window_height, float new_window_scale)
 {
+	if (GLLibretro::Active)
+	{
+		// The "window" is the backbuffer rendered for the frontend, so just
+		// adopt the new size -- BeginPresent recreates the backbuffer to match
+		// on the next frame.
+		m_window_info.surface_width = new_window_width;
+		m_window_info.surface_height = new_window_height;
+		m_window_info.surface_scale = new_window_scale;
+		return;
+	}
+
 	m_window_info.surface_scale = new_window_scale;
 	if (m_window_info.type == WindowInfo::Type::Surfaceless ||
 		(m_window_info.surface_width == new_window_width &&
@@ -1084,14 +1133,44 @@ std::string GSDeviceOGL::GetDriverInfo() const
 
 GSDevice::PresentResult GSDeviceOGL::BeginPresent(bool frame_skip)
 {
-	if (frame_skip || m_window_info.type == WindowInfo::Type::Surfaceless)
+	if (frame_skip)
+		return PresentResult::FrameSkipped;
+
+	// Libretro: run a REAL present, just aimed at a backbuffer texture instead
+	// of the window, so the whole normal path (aspect-correct PresentRect, TV
+	// shaders, the ImGui OSD in EndPresent) works unchanged. EndPresent then
+	// publishes the finished texture for retro_run to blit.
+	const bool libretro = GLLibretro::Active;
+	if (!libretro && m_window_info.type == WindowInfo::Type::Surfaceless)
 		return PresentResult::FrameSkipped;
 
 	// Get the pipeline statistics for this frame before postprocessing.
 	if (m_gpu_pipeline_statistics_enabled)
 		PopPipelineStatisticsQuery();
 
-	OMSetFBO(0);
+	const GSVector2i size = GetWindowSize();
+
+	if (libretro)
+	{
+		std::unique_ptr<GSTextureOGL>& bb = m_libretro_bb[m_libretro_bb_idx];
+		if (!bb || bb->GetWidth() != size.x || bb->GetHeight() != size.y)
+		{
+			bb = std::make_unique<GSTextureOGL>(
+				GSTexture::RenderTarget, size.x, size.y, 1, GSTexture::Format::Color);
+			if (!bb->GetID())
+			{
+				bb.reset();
+				return PresentResult::FrameSkipped;
+			}
+		}
+
+		OMSetRenderTargets(bb.get(), nullptr, nullptr);
+	}
+	else
+	{
+		OMSetFBO(0);
+	}
+
 	OMSetColorMaskState();
 
 	glDisable(GL_SCISSOR_TEST);
@@ -1099,7 +1178,6 @@ GSDevice::PresentResult GSDeviceOGL::BeginPresent(bool frame_skip)
 	glClear(GL_COLOR_BUFFER_BIT);
 	glEnable(GL_SCISSOR_TEST);
 
-	const GSVector2i size = GetWindowSize();
 	SetViewport(size);
 	SetScissor(GSVector4i::loadh(size));
 
@@ -1113,7 +1191,27 @@ void GSDeviceOGL::EndPresent()
 	if (m_gpu_timing_enabled)
 		PopTimestampQuery();
 
-	m_gl_context->SwapBuffers();
+	if (GLLibretro::Active)
+	{
+		// The frontend reads the texture from its own context, on its own
+		// thread, so ordering has to be spelled out: a fence it can wait on,
+		// and a flush, without which the fence may never be submitted and the
+		// wait never completes.
+		GSTextureOGL* bb = m_libretro_bb[m_libretro_bb_idx].get();
+		GLLibretro::Frame frame;
+		frame.texture = bb->GetID();
+		frame.width = static_cast<u32>(bb->GetWidth());
+		frame.height = static_cast<u32>(bb->GetHeight());
+		frame.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+		glFlush();
+
+		m_libretro_bb_idx = (m_libretro_bb_idx + 1) % kLibretroBackbuffers;
+		GLLibretro::PublishFrame(frame);
+	}
+	else
+	{
+		m_gl_context->SwapBuffers();
+	}
 
 	if (m_gpu_timing_enabled)
 		KickTimestampQuery();
