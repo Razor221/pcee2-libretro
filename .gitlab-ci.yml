@@ -116,9 +116,29 @@ include:
   # wrong architecture fails at link, not at configure, so an x86_64 and an
   # arm64 build must never share one.
   - export NUMPROC=$(($(sysctl -n hw.ncpu)/5))
-  - brew list ninja >/dev/null 2>&1 || brew install ninja
-  - brew list nasm >/dev/null 2>&1 || brew install nasm
-  - OSX_ARCH=$ARCH bash pcee2-libretro/scripts/build-deps-macos.sh "$CI_PROJECT_DIR/deps"
+  # Job traces on this GitLab need an account to read and neither of us has one,
+  # so the setup writes its own log and the job keeps it as an artifact (those
+  # are public). Remove once the macOS jobs are green.
+  - |
+    {
+      echo "== $CI_JOB_NAME on $(uname -m)"; sw_vers || true; xcode-select -p || true
+      echo "PATH=$PATH"
+      for t in git cmake ninja nasm brew python3 clang curl; do
+        printf '%-8s ' "$t"; command -v "$t" || echo MISSING
+      done
+    } > ci-macos-debug.log 2>&1
+  - |
+    {
+      if command -v brew >/dev/null 2>&1; then
+        brew list ninja >/dev/null 2>&1 || brew install ninja || echo "brew install ninja FAILED"
+        brew list nasm  >/dev/null 2>&1 || brew install nasm  || echo "brew install nasm FAILED"
+      else
+        echo "no brew on this runner"
+      fi
+    } >> ci-macos-debug.log 2>&1
+  - |
+    set -o pipefail
+    OSX_ARCH=$ARCH bash pcee2-libretro/scripts/build-deps-macos.sh "$CI_PROJECT_DIR/deps" 2>&1 | tail -400 | tee -a ci-macos-debug.log
 
 .pcee2-setup-android: &pcee2-setup-android
   - export DEBIAN_FRONTEND=noninteractive
@@ -244,6 +264,12 @@ libretro-build-osx-x64:
     key: "pcee2-deps-osx-x64"
     paths:
       - deps/
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - ci-macos-debug.log
+      - $LIBNAME
   before_script:
     - *pcee2-deps-macos
 
@@ -256,6 +282,12 @@ libretro-build-osx-arm64:
     key: "pcee2-deps-osx-arm64"
     paths:
       - deps/
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - ci-macos-debug.log
+      - $LIBNAME
   before_script:
     - *pcee2-deps-macos
 
