@@ -144,7 +144,26 @@ libretro-build-linux-x64:
   extends:
     - .libretro-linux-cmake-x86_64
     - .core-defs
+  # libretro-runner-02 has been dropping this job within half a minute, several
+  # pipelines in a row, then running it green with nothing changed — the same
+  # window in which cemu's android and linux jobs on that runner flickered too.
+  # Retry rather than let a runner having a bad minute redden the pipeline; a
+  # real breakage still fails three times.
+  retry: 2
+  # And if it does fail all three, leave something readable behind: traces here
+  # need an account, artifacts do not.
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - ci-linux-debug.log
   before_script:
+    - |
+      {
+        head -2 /etc/os-release; id; df -h / | tail -1; free -m | head -2
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update
+      } > ci-linux-debug.log 2>&1 || echo "setup probe failed with $?" >> ci-linux-debug.log
     - *pcee2-setup-linux
     - *pcee2-deps-linux
 
