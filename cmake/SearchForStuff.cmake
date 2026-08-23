@@ -24,11 +24,18 @@ find_package(ZLIB REQUIRED) # v1.3, but Mac uses the SDK version.
 find_package(Zstd 1.5.5 REQUIRED)
 find_package(LZ4 REQUIRED)
 find_package(WebP REQUIRED) # v1.3.2, spews an error on Linux because no pkg-config.
+# libwebp >= 1.3 splits SharpYUV into its own static library, which the config
+# file does not carry, so a static webp has to be given it by hand. The MinGW
+# cross-build and Android are known to link one, so there it has to be found;
+# anywhere else it is only present when libwebp came from the deps tree rather
+# than the distribution, whose shared libwebp carries SharpYUV itself.
 if((WIN32 AND NOT MSVC) OR ANDROID)
-	# libwebp >= 1.3 splits SharpYUV into its own static library, which the
-	# config file does not carry, so a static webp has to be given it by hand -
-	# the MinGW cross-build and Android both link one.
 	find_library(SHARPYUV_LIBRARY NAMES sharpyuv REQUIRED)
+else()
+	# Static archive only, and only if there is one: a distribution's shared
+	# libwebp carries SharpYUV itself, and linking its shared companion would
+	# just put another SONAME in the core for nothing.
+	find_library(SHARPYUV_LIBRARY NAMES libsharpyuv.a sharpyuv.lib)
 endif()
 find_package(SDL3 3.2.6 REQUIRED)
 find_package(Freetype 2.10 REQUIRED) # 2.10 is the first with COLRv0 support, which we need for rendering emoji

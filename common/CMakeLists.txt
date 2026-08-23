@@ -228,10 +228,11 @@ target_link_libraries(common PRIVATE
 	cpuinfo
 )
 
-if(TARGET WebP::libwebp)
-	target_link_libraries(common PRIVATE
-		${CMAKE_BINARY_DIR}/deps/lib/libsharpyuv.a
-	)
+# A static libwebp needs SharpYUV linked next to it; see SearchForStuff.cmake.
+# Naming a path in the deps tree instead would break every build whose libwebp
+# comes from the distribution, which never populates that tree.
+if(TARGET WebP::libwebp AND SHARPYUV_LIBRARY)
+	target_link_libraries(common PRIVATE ${SHARPYUV_LIBRARY})
 endif()
 
 target_link_libraries(common PUBLIC
