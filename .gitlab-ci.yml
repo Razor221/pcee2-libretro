@@ -273,6 +273,10 @@ libretro-build-osx-x64:
   extends:
     - .libretro-osx-cmake-x86
     - .core-defs
+  variables:
+    # PCSX2 writes the core to <build>/bin, which is where the template has to
+    # look for it; the Linux templates find their .so in the build root.
+    EXTRA_PATH: bin
   cache:
     key: "pcee2-deps-osx-x64"
     paths:
@@ -293,6 +297,10 @@ libretro-build-osx-arm64:
   extends:
     - .libretro-osx-cmake-arm64
     - .core-defs
+  variables:
+    # PCSX2 writes the core to <build>/bin, which is where the template has to
+    # look for it; the Linux templates find their .so in the build root.
+    EXTRA_PATH: bin
   cache:
     key: "pcee2-deps-osx-arm64"
     paths:
