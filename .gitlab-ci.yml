@@ -271,7 +271,10 @@ libretro-build-windows-x64:
 libretro-build-osx-x64:
   allow_failure: true
   extends:
-    - .libretro-osx-cmake-x86
+    # -x86_64, not -x86: the latter is the 32-bit profile and sets ARCH=x86,
+    # which reaches CMAKE_OSX_ARCHITECTURES as an architecture that does not
+    # exist and stops the dependency build before it compiles anything.
+    - .libretro-osx-cmake-x86_64
     - .core-defs
   variables:
     # PCSX2 writes the core to <build>/bin, which is where the template has to
