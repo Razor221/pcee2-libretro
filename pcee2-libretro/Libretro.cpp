@@ -59,9 +59,11 @@
 #include "pcsx2/ImGui/ImGuiManager.h"
 #include "pcsx2/Input/InputManager.h"
 #include "pcsx2/GS/Renderers/Common/GSLibretro.h"
+#ifdef ENABLE_VULKAN
 #include "pcsx2/GS/Renderers/Vulkan/GSDeviceVK.h"
 #include "pcsx2/GS/Renderers/Vulkan/VKLibretro.h"
 #include "pcsx2/GS/Renderers/Vulkan/VKLoader.h"
+#endif
 #ifdef ENABLE_OPENGL
 #include "pcsx2/GS/Renderers/OpenGL/GLLibretro.h"
 #include "pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.h"
@@ -79,7 +81,9 @@
 #include "svnrev.h"
 
 #include "libretro.h"
+#ifdef ENABLE_VULKAN
 #include "libretro_vulkan.h"
+#endif
 #include "LibretroVFS.h"
 
 #include "fmt/format.h"
@@ -602,7 +606,10 @@ void LibretroHost::RegisterCoreOptions()
 			"Hardware renderer API, or the software renderer. Switching to or from Software applies "
 			"on the fly; switching between hardware APIs takes effect when the content is restarted.",
 			nullptr, "graphics",
-			{{"vulkan", "Vulkan (Hardware)"},
+			{
+#ifdef ENABLE_VULKAN
+			{"vulkan", "Vulkan (Hardware)"},
+#endif
 #ifdef ENABLE_OPENGL
 				{"opengl", "OpenGL (Hardware)"},
 #endif
@@ -808,7 +815,11 @@ void LibretroHost::ReadCoreOptions(bool startup)
 		return fallback;
 	};
 
+#if defined(ENABLE_VULKAN)
 	const char* renderer = get_option("pcsx2_renderer", "vulkan");
+#elif defined(ENABLE_OPENGL)
+	const char* renderer = get_option("pcsx2_renderer", "opengl");
+#endif
 	GSRendererType renderer_type = GSRendererType::VK;
 	if (std::strcmp(renderer, "software") == 0)
 		renderer_type = GSRendererType::SW;
@@ -1173,7 +1184,7 @@ void LibretroHost::DrainCPUWork()
 // device (its vkCreateDevice is intercepted by the VKLibretro wraps, which
 // capture the resulting VkDevice for the reply below).
 //////////////////////////////////////////////////////////////////////////
-
+#ifdef ENABLE_VULKAN
 static const VkApplicationInfo* GetVulkanApplicationInfo(void)
 {
 	static VkApplicationInfo app_info{VK_STRUCTURE_TYPE_APPLICATION_INFO};
@@ -1222,10 +1233,13 @@ static bool CreateVulkanDevice(retro_vulkan_context* context, VkInstance instanc
 	context->presentation_queue_family_index = context->queue_family_index;
 	return true;
 }
+#endif
 
 static void OnContextReset(void)
 {
 	retro_hw_render_interface* iface = nullptr;
+
+#ifdef ENABLE_VULKAN
 	if (!s_environ_cb(RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE, &iface) || !iface ||
 		iface->interface_type != RETRO_HW_RENDER_INTERFACE_VULKAN)
 	{
@@ -1233,6 +1247,8 @@ static void OnContextReset(void)
 		return;
 	}
 	VKLibretro::SetHWRenderInterface(iface);
+#endif
+
 	s_context_ready.store(true, std::memory_order_release);
 }
 
@@ -1245,7 +1261,9 @@ static void OnContextDestroy(void)
 	// presenting, let the GS thread finish what it already has, and only then
 	// drop the interface (SetHWRenderInterface waits out a submit that is
 	// already inside the wrapper).
+#ifdef ENABLE_VULKAN
 	VKLibretro::AbortPacing();
+#endif
 	s_context_ready.store(false, std::memory_order_release);
 	if (MTGS::IsOpen())
 	{
@@ -1254,7 +1272,9 @@ static void OnContextDestroy(void)
 		for (int i = 0; i < 1000 && !gs_drained.load(std::memory_order_acquire); i++)
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
+#ifdef ENABLE_VULKAN
 	VKLibretro::SetHWRenderInterface(nullptr);
+#endif
 }
 
 #ifdef ENABLE_OPENGL
@@ -1876,8 +1896,13 @@ bool retro_load_game(const struct retro_game_info* game)
 	// the readback path for A/B testing.
 	{
 		retro_variable var = {"pcsx2_renderer", nullptr};
+#if defined(ENABLE_VULKAN)
 		const char* const renderer =
 			(s_environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) ? var.value : "vulkan";
+#elif defined(ENABLE_OPENGL)
+		const char* const renderer =
+			(s_environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) ? var.value : "opengl";
+#endif
 		if (std::getenv("PCEE2_READBACK"))
 			s_hw_render = HWRender::None;
 		else if (std::strcmp(renderer, "opengl") == 0)
@@ -1896,6 +1921,7 @@ bool retro_load_game(const struct retro_game_info* game)
 	}
 #endif
 
+#ifdef ENABLE_VULKAN
 	if (s_hw_render == HWRender::Vulkan)
 	{
 		static struct retro_hw_render_callback hw_render = {};
@@ -1932,8 +1958,10 @@ bool retro_load_game(const struct retro_game_info* game)
 			s_context_ready.store(false, std::memory_order_release);
 		}
 	}
+#endif
+
 #ifdef ENABLE_OPENGL
-	else if (s_hw_render == HWRender::OpenGL)
+	if (s_hw_render == HWRender::OpenGL)
 	{
 		// A shared context is the whole basis of the GL path: the GS thread
 		// needs a context of its own, and the only way to get one that can
@@ -2073,6 +2101,7 @@ void retro_unload_game(void)
 	// duped frames) — retract it and wait for the GPU before the VM teardown
 	// below destroys the textures it points at. Abort pacing first so the GS
 	// thread can't stay parked in PublishFrame.
+#ifdef ENABLE_VULKAN
 	if (s_hw_render == HWRender::Vulkan)
 	{
 		VKLibretro::AbortPacing();
@@ -2082,6 +2111,8 @@ void retro_unload_game(void)
 			vulkan->wait_sync_index(vulkan->handle);
 		}
 	}
+#endif
+
 #ifdef ENABLE_OPENGL
 	// GL hands over a texture retro_run copies out of, so there is nothing for
 	// the frontend to keep replaying — just stop the handoff before the VM
@@ -2113,11 +2144,15 @@ void retro_unload_game(void)
 	s_audio_stream = nullptr;
 	if (!HWRenderActive())
 		GSSetFramebufferReadback(nullptr, 0, 0);
+
+#ifdef ENABLE_VULKAN
 	if (s_hw_render == HWRender::Vulkan)
 	{
 		VKLibretro::Shutdown();
 		VKLibretro::Active = false;
 	}
+#endif
+
 #ifdef ENABLE_OPENGL
 	else if (s_hw_render == HWRender::OpenGL)
 	{
@@ -2493,6 +2528,7 @@ void retro_run(void)
 	const bool got_frame = s_frame_cv.wait_for(lock, std::chrono::milliseconds(200), []() { return s_frame_ready; });
 	s_frame_ready = false;
 
+#ifdef ENABLE_VULKAN
 	if (s_hw_render == HWRender::Vulkan)
 	{
 		// Zero-copy present: consume the frame the GS just published and hand
@@ -2544,8 +2580,10 @@ void retro_run(void)
 				s_frame_height ? s_frame_height : DEFAULT_HEIGHT, 0);
 		}
 	}
+#endif
+
 #ifdef ENABLE_OPENGL
-	else if (s_hw_render == HWRender::OpenGL)
+	if (s_hw_render == HWRender::OpenGL)
 	{
 		// The frontend's context is current on this thread and the GS thread's
 		// context shares its objects, so the texture the GS just published can
