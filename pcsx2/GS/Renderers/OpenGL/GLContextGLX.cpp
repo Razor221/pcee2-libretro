@@ -344,6 +344,9 @@ bool GLContextGLX::SetSwapInterval(s32 interval)
 
 std::unique_ptr<GLContext> GLContextGLX::CreateSharedContext(const WindowInfo& wi, Error* error)
 {
-	static constexpr Version vlist[] = {{4, 6}, {4, 5}, {4, 4}, {4, 3}, {4, 2}, {4, 1}, {4, 0}, {3, 3}};
+	// GLX is the desktop-only path; a GLES frontend on this platform is on EGL.
+	static constexpr Version vlist[] = {{Profile::Core, 4, 6}, {Profile::Core, 4, 5}, {Profile::Core, 4, 4},
+		{Profile::Core, 4, 3}, {Profile::Core, 4, 2}, {Profile::Core, 4, 1}, {Profile::Core, 4, 0},
+		{Profile::Core, 3, 3}};
 	return CreateShared(wi, m_display, m_context, vlist, error);
 }

@@ -21,7 +21,7 @@ public:
 	// inside its context_reset callback, on the frontend's own thread. These
 	// two grab it there, and then build the GS thread a context that shares
 	// its objects -- see GLLibretro.
-	static bool CaptureCurrentContext(EGLDisplay* display, EGLContext* context);
+	static bool CaptureCurrentContext(EGLDisplay* display, EGLContext* context, bool* is_gles);
 	static std::unique_ptr<GLContext> CreateShared(const WindowInfo& wi, EGLDisplay display, EGLContext share_context,
 		std::span<const Version> versions_to_try, Error* error);
 

@@ -15,6 +15,7 @@
 
 #include <condition_variable>
 #include <mutex>
+#include <vector>
 
 namespace GLLibretro
 {
@@ -37,6 +38,9 @@ namespace GLLibretro
 		Backend s_backend = Backend::None;
 		void* s_display = nullptr;
 		void* s_share_context = nullptr;
+		// Whether the frontend handed us a GL ES context. Objects can only be
+		// shared between contexts of the same client API, so ours has to match.
+		bool s_share_is_gles = false;
 	} // namespace
 
 	bool CaptureFrontendContext(Error* error)
@@ -57,12 +61,15 @@ namespace GLLibretro
 		// asking it about a thread that is really on GLX is harmless.
 		EGLDisplay egl_display = EGL_NO_DISPLAY;
 		EGLContext egl_context = EGL_NO_CONTEXT;
-		if (GLContextEGL::CaptureCurrentContext(&egl_display, &egl_context))
+		bool egl_is_gles = false;
+		if (GLContextEGL::CaptureCurrentContext(&egl_display, &egl_context, &egl_is_gles))
 		{
 			s_backend = Backend::EGL;
 			s_display = egl_display;
 			s_share_context = egl_context;
-			Console.WriteLn("GL: Captured the frontend's EGL context.");
+			s_share_is_gles = egl_is_gles;
+			Console.WriteLnFmt("GL: Captured the frontend's EGL context ({}).",
+				egl_is_gles ? "OpenGL ES" : "desktop OpenGL");
 			return true;
 		}
 
@@ -88,6 +95,7 @@ namespace GLLibretro
 		s_backend = Backend::None;
 		s_display = nullptr;
 		s_share_context = nullptr;
+		s_share_is_gles = false;
 	}
 
 	bool HasFrontendContext()
@@ -98,6 +106,24 @@ namespace GLLibretro
 	std::unique_ptr<GLContext> CreateSharedContext(
 		const WindowInfo& wi, std::span<const GLContext::Version> versions_to_try, Error* error)
 	{
+		// Keep only the profile the frontend's context uses. Sharing across
+		// client APIs is not a thing, and trying the wrong ones first just
+		// spends a failed eglCreateContext on each.
+		const auto wanted =
+			s_share_is_gles ? GLContext::Profile::ES : GLContext::Profile::Core;
+		std::vector<GLContext::Version> matching;
+		for (const GLContext::Version& v : versions_to_try)
+		{
+			if (v.profile == wanted)
+				matching.push_back(v);
+		}
+		if (matching.empty())
+		{
+			Error::SetStringView(error, "No context versions match the frontend's client API");
+			return nullptr;
+		}
+		versions_to_try = matching;
+
 		switch (s_backend)
 		{
 #if defined(_WIN32)

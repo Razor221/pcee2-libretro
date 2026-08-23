@@ -1942,10 +1942,24 @@ bool retro_load_game(const struct retro_game_info* game)
 		if (!s_environ_cb(RETRO_ENVIRONMENT_SET_HW_SHARED_CONTEXT, nullptr))
 			Console.Warning("Frontend does not advertise shared HW contexts; trying anyway.");
 
+		// Desktop GL first, GL ES second: the GS renderer is happier on desktop
+		// GL (dual-source blending and clip control are core there, extensions
+		// at best on ES), but a mobile or embedded frontend has only ES to
+		// offer and refuses the desktop request outright. PCEE2_GLES=1 flips
+		// the order, for testing and for drivers whose desktop GL is worse than
+		// their ES.
+		const bool prefer_gles = (std::getenv("PCEE2_GLES") != nullptr);
+		static constexpr struct
+		{
+			unsigned context_type;
+			unsigned major, minor;
+			const char* name;
+		} kGLContexts[] = {
+			{RETRO_HW_CONTEXT_OPENGL_CORE, 3, 3, "OpenGL 3.3 core"},
+			{RETRO_HW_CONTEXT_OPENGLES3, 3, 2, "OpenGL ES 3.2"},
+		};
+
 		s_gl_hw_render = {};
-		s_gl_hw_render.context_type = RETRO_HW_CONTEXT_OPENGL_CORE;
-		s_gl_hw_render.version_major = 3;
-		s_gl_hw_render.version_minor = 3;
 		s_gl_hw_render.context_reset = OnGLContextReset;
 		s_gl_hw_render.context_destroy = OnGLContextDestroy;
 		// The GS renders into a texture and retro_run blits it; the frontend's
@@ -1961,9 +1975,28 @@ bool retro_load_game(const struct retro_game_info* game)
 		// so the picture is stuck until the content is reloaded. Saying the
 		// context is expendable gets the callback, and with it a clean rebuild.
 		s_gl_hw_render.cache_context = false;
-		if (!s_environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &s_gl_hw_render))
+
+		bool got_context = false;
+		for (int i = 0; i < 2 && !got_context; i++)
 		{
-			Console.Warning("Frontend refused an OpenGL 3.3 core HW context; falling back to readback present.");
+			const auto& want = kGLContexts[prefer_gles ? (1 - i) : i];
+			s_gl_hw_render.context_type = static_cast<retro_hw_context_type>(want.context_type);
+			s_gl_hw_render.version_major = want.major;
+			s_gl_hw_render.version_minor = want.minor;
+			if (s_environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &s_gl_hw_render))
+			{
+				Console.WriteLnFmt("Frontend gave us a {} context.", want.name);
+				got_context = true;
+			}
+			else
+			{
+				Console.WarningFmt("Frontend refused a {} context.", want.name);
+			}
+		}
+
+		if (!got_context)
+		{
+			Console.Warning("No OpenGL HW context available; falling back to readback present.");
 			s_hw_render = HWRender::None;
 		}
 		else

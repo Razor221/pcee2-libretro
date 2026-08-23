@@ -265,8 +265,13 @@ bool GSDeviceOGL::Create(GSVSyncMode vsync_mode, bool allow_present_throttle)
 		return false;
 	}
 
+	m_is_gles = m_gl_context->IsGLES();
+
+
+
 	if (!CheckFeatures())
 		return false;
+
 
 	// Store adapter name currently in use
 	m_name = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
@@ -579,7 +584,11 @@ bool GSDeviceOGL::Create(GSVSyncMode vsync_mode, bool allow_present_throttle)
 		return false;
 
 	// Image load store and GLSL 420pack is core in GL4.2, no need to check.
-	m_features.cas_sharpening = ((GLAD_GL_VERSION_4_2 && GLAD_GL_ARB_compute_shader) || GLAD_GL_ES_VERSION_3_2) && CreateCASPrograms();
+	// cas.glsl is a desktop compute shader ("#version 420", ARB_shading_language_420pack
+	// bindings), so an ES context has nothing to compile even where it advertises
+	// compute. The rest of the shaders use the ES-aware header and are fine.
+	m_features.cas_sharpening =
+		!m_is_gles && GLAD_GL_VERSION_4_2 && GLAD_GL_ARB_compute_shader && CreateCASPrograms();
 
 	// ****************************************************************
 	// rasterization configuration
@@ -587,7 +596,10 @@ bool GSDeviceOGL::Create(GSVSyncMode vsync_mode, bool allow_present_throttle)
 	{
 		GL_PUSH("GSDeviceOGL::Rasterization");
 
-		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+		// ES has no glPolygonMode at all -- filled is the only mode it has, which
+		// is what this asks for anyway.
+		if (!m_is_gles)
+			glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 		glDisable(GL_CULL_FACE);
 		glEnable(GL_SCISSOR_TEST);
 		glDisable(GL_MULTISAMPLE);
@@ -628,8 +640,15 @@ bool GSDeviceOGL::Create(GSVSyncMode vsync_mode, bool allow_present_throttle)
 	// This extension allow FS depth to range from -1 to 1. So
 	// gl_position.z could range from [0, 1]
 	// Change depth convention
+	// ES has no ARB_clip_control. GL_EXT_clip_control (Adreno, some Mali) is the
+	// same call with the same enums -- but under its own name, so it has to be
+	// spelled out rather than folded into the condition above. Without either,
+	// the shaders remap z themselves; see HAS_CLIP_CONTROL in tfx_vgs.glsl,
+	// which is gated on exactly this pair so the two always agree.
 	if (GLAD_GL_ARB_clip_control)
 		glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
+	else if (m_is_gles && GLAD_GL_EXT_clip_control)
+		glClipControlEXT(GL_LOWER_LEFT_EXT, GL_ZERO_TO_ONE_EXT);
 
 	// ****************************************************************
 	// HW renderer shader
@@ -778,7 +797,7 @@ bool GSDeviceOGL::CheckFeatures()
 	GLint minor_gl = 0;
 	glGetIntegerv(GL_MAJOR_VERSION, &major_gl);
 	glGetIntegerv(GL_MINOR_VERSION, &minor_gl);
-	if (!GLAD_GL_VERSION_3_3)
+	if (!m_is_gles && !GLAD_GL_VERSION_3_3)
 	{
 		Host::ReportErrorAsync(
 			"GS", fmt::format(TRANSLATE_FS("GSDeviceOGL", "OpenGL renderer is not supported. Only OpenGL {}.{}\n was found"), major_gl, minor_gl));
@@ -805,23 +824,28 @@ bool GSDeviceOGL::CheckFeatures()
 	}
 	DevCon.WriteLn(std::move(extensions));
 
-	if (!GLAD_GL_ARB_shading_language_420pack)
+	// All three are desktop-GL spellings. ES has its own answers below, and
+	// demanding these of an ES context would reject every mobile GPU.
+	if (!m_is_gles)
 	{
-		Host::ReportFormattedErrorAsync(
-			"GS", "GL_ARB_shading_language_420pack is not supported, this is required for the OpenGL renderer.");
-		return false;
-	}
+		if (!GLAD_GL_ARB_shading_language_420pack)
+		{
+			Host::ReportFormattedErrorAsync(
+				"GS", "GL_ARB_shading_language_420pack is not supported, this is required for the OpenGL renderer.");
+			return false;
+		}
 
-	if (!GLAD_GL_VERSION_4_3 && !GLAD_GL_ARB_copy_image && !GLAD_GL_EXT_copy_image && !GLAD_GL_NV_copy_image)
-	{
-		Host::AddOSDMessage(
-			"GL_ARB_copy_image is not supported, copies will be slower.", Host::OSD_ERROR_DURATION);
-	}
+		if (!GLAD_GL_VERSION_4_3 && !GLAD_GL_ARB_copy_image && !GLAD_GL_EXT_copy_image && !GLAD_GL_NV_copy_image)
+		{
+			Host::AddOSDMessage(
+				"GL_ARB_copy_image is not supported, copies will be slower.", Host::OSD_ERROR_DURATION);
+		}
 
-	if (!GLAD_GL_VERSION_4_5 && !GLAD_GL_ARB_clip_control)
-	{
-		Host::AddOSDMessage(
-			"GL_ARB_clip_control is not supported, depth will be less accurate.", Host::OSD_ERROR_DURATION);
+		if (!GLAD_GL_VERSION_4_5 && !GLAD_GL_ARB_clip_control)
+		{
+			Host::AddOSDMessage(
+				"GL_ARB_clip_control is not supported, depth will be less accurate.", Host::OSD_ERROR_DURATION);
+		}
 	}
 
 	if (!GLAD_GL_ARB_viewport_array)
@@ -852,9 +876,53 @@ bool GSDeviceOGL::CheckFeatures()
 		Emulate_DSA::Init();
 	}
 
+	// Two entry points every draw path calls unsuffixed, which are core only in
+	// GL ES 3.2. A driver capped at ES 3.1 (ANGLE-over-Vulkan is the usual one)
+	// leaves GLAD's unsuffixed pointer null while still offering the OES/EXT
+	// variant, so the first draw jumps to null. Alias them, the same way
+	// glTextureBarrier is aliased to the NV spelling above.
+	if (!glDrawElementsBaseVertex)
+	{
+		if (GLAD_GL_OES_draw_elements_base_vertex && glDrawElementsBaseVertexOES)
+			glDrawElementsBaseVertex = glDrawElementsBaseVertexOES;
+		else if (GLAD_GL_EXT_draw_elements_base_vertex && glDrawElementsBaseVertexEXT)
+			glDrawElementsBaseVertex = glDrawElementsBaseVertexEXT;
+		else
+			Console.Error("GL: glDrawElementsBaseVertex is unavailable (no core/OES/EXT) - draws will fail.");
+	}
+
+	if (!glColorMaski)
+	{
+		if (GLAD_GL_OES_draw_buffers_indexed && glColorMaskiOES)
+			glColorMaski = glColorMaskiOES;
+		else if (GLAD_GL_EXT_draw_buffers_indexed && glColorMaskiEXT)
+			glColorMaski = glColorMaskiEXT;
+		else
+			Console.Error("GL: glColorMaski is unavailable (no core/OES/EXT) - draws will fail.");
+	}
+
 	// Don't use PBOs when we don't have ARB_buffer_storage, orphaning buffers probably ends up worse than just
 	// using the normal texture update routines and letting the driver take care of it.
-	m_bugs.buggy_pbo = !GLAD_GL_VERSION_4_4 && !GLAD_GL_ARB_buffer_storage && !GLAD_GL_EXT_buffer_storage;
+	// Desktop GL always has dual-source blending; on ES it is an extension. The
+	// renderer has no in-shader emulation of SRC1 blend equations here yet, so
+	// a driver without it cannot run the hardware renderer at all — say which
+	// one is missing rather than failing later in shader compilation.
+	m_dual_source_blend =
+		!m_is_gles || GLAD_GL_EXT_blend_func_extended || GLAD_GL_ARB_blend_func_extended;
+	if (!m_dual_source_blend)
+	{
+		Host::ReportFormattedErrorAsync("GS",
+			"This GL ES driver has neither GL_EXT_blend_func_extended nor GL_ARB_blend_func_extended. "
+			"The hardware renderer needs dual-source blending; use the software renderer.");
+		return false;
+	}
+
+	// PBOs only pay off when buffer_storage can pin a persistently-mapped staging
+	// region; without it the orphaning fallback loses to just letting the driver
+	// do the upload. EXT_buffer_storage is the ES spelling of the same thing.
+	m_bugs.buggy_pbo = m_is_gles ?
+		!GLAD_GL_EXT_buffer_storage :
+		(!GLAD_GL_VERSION_4_4 && !GLAD_GL_ARB_buffer_storage && !GLAD_GL_EXT_buffer_storage);
 	if (m_bugs.buggy_pbo)
 		Console.Warning("GL: Not using PBOs for texture uploads because buffer_storage is unavailable.");
 
@@ -1280,6 +1348,13 @@ void GSDeviceOGL::KickTimestampQuery()
 
 bool GSDeviceOGL::SetGPUTimingEnabled(bool enabled)
 {
+	// ES has neither glGetQueryObjectiv nor glGetQueryObjectui64v; reading a
+	// timestamp query there needs EXT_disjoint_timer_query and its u32 entry
+	// point. Not wired up, so GPU timing is simply unavailable on ES rather
+	// than calling through a null pointer once a frame.
+	if (enabled && m_is_gles)
+		return false;
+
 	if (m_gpu_timing_enabled == enabled)
 		return true;
 
@@ -1383,7 +1458,8 @@ bool GSDeviceOGL::SetGPUPipelineStatisticsEnabled(bool enabled)
 	if (m_gpu_pipeline_statistics_enabled == enabled)
 		return true;
 
-	m_gpu_pipeline_statistics_enabled = enabled && m_gpu_pipeline_statistics_supported;
+	// Same reason as SetGPUTimingEnabled: the result readers do not exist on ES.
+	m_gpu_pipeline_statistics_enabled = enabled && m_gpu_pipeline_statistics_supported && !m_is_gles;
 
 	if (m_gpu_pipeline_statistics_enabled)
 		CreatePipelineStatisticsQueries();
@@ -1480,7 +1556,10 @@ void GSDeviceOGL::CommitClear(GSTexture* t, bool use_write_fbo)
 
 	if (T->GetState() == GSTexture::State::Invalidated)
 	{
-		if (GLAD_GL_VERSION_4_3)
+		// Core in GL 4.3 and in GL ES 3.0 alike; the desktop-only gate used to skip
+		// every ES device, turning each "this content is dead" hint into a real
+		// store on exactly the tilers that need it most.
+		if (GLAD_GL_VERSION_4_3 || m_is_gles)
 		{
 			if (T->IsDepthStencil())
 			{
@@ -1650,7 +1729,42 @@ std::string GSDeviceOGL::GenGlslHeader(const std::string_view entry, GLenum type
 {
 	std::string header;
 
-	if (m_features.vs_expand && GLAD_GL_VERSION_4_3)
+	if (m_is_gles)
+	{
+		header = GLAD_GL_ES_VERSION_3_2 ? "#version 320 es\n" : "#version 310 es\n";
+
+		// Vertex/fragment interface blocks (out/in SHADER {}) are core only in
+		// GLSL ES 3.20. On an ES 3.1 context they have to be asked for, or every
+		// TFX shader fails to compile and there is no valid program left to bind.
+		if (!GLAD_GL_ES_VERSION_3_2)
+		{
+			if (GLAD_GL_EXT_shader_io_blocks)
+				header += "#extension GL_EXT_shader_io_blocks : enable\n";
+			else if (GLAD_GL_OES_shader_io_blocks)
+				header += "#extension GL_OES_shader_io_blocks : enable\n";
+		}
+
+		if (GLAD_GL_EXT_blend_func_extended)
+			header += "#extension GL_EXT_blend_func_extended : require\n";
+		else if (GLAD_GL_ARB_blend_func_extended)
+			header += "#extension GL_ARB_blend_func_extended : require\n";
+
+		if (m_features.framebuffer_fetch && GLAD_GL_EXT_shader_framebuffer_fetch)
+			header += "#extension GL_EXT_shader_framebuffer_fetch : require\n";
+
+		// ES has no default precision for these, and no shader compiles without one.
+		header += "precision highp float;\n";
+		header += "precision highp int;\n";
+		header += "precision highp sampler2D;\n";
+		if (GLAD_GL_ES_VERSION_3_1)
+			header += "precision highp sampler2DMS;\n";
+		if (GLAD_GL_ES_VERSION_3_2)
+			header += "precision highp usamplerBuffer;\n";
+
+		if (!m_dual_source_blend)
+			header += "#define DISABLE_DUAL_SOURCE\n";
+	}
+	else if (m_features.vs_expand && GLAD_GL_VERSION_4_3)
 	{
 		// Intel's GL driver doesn't like the readonly qualifier with 3.3 GLSL.
 		header = "#version 430 core\n";
@@ -1665,13 +1779,34 @@ std::string GSDeviceOGL::GenGlslHeader(const std::string_view entry, GLenum type
 			header += "#extension GL_ARB_shader_storage_buffer_object: require\n";
 	}
 
-	if (m_features.framebuffer_fetch && GLAD_GL_EXT_shader_framebuffer_fetch)
+	if (!m_is_gles && m_features.framebuffer_fetch && GLAD_GL_EXT_shader_framebuffer_fetch)
 		header += "#extension GL_EXT_shader_framebuffer_fetch : require\n";
 
 	if (m_features.framebuffer_fetch)
 		header += "#define HAS_FRAMEBUFFER_FETCH 1\n";
 	else
 		header += "#define HAS_FRAMEBUFFER_FETCH 0\n";
+
+	// Which spelling of framebuffer fetch the shaders may use, and whether the
+	// Mali-specific workarounds apply. There is no Mali driver profiling here,
+	// so that one is always off and the guarded hunks compile out.
+	header += fmt::format(
+		"#define HAS_EXT_SHADER_FRAMEBUFFER_FETCH {}\n", GLAD_GL_EXT_shader_framebuffer_fetch ? 1 : 0);
+	header += fmt::format(
+		"#define HAS_ARM_SHADER_FRAMEBUFFER_FETCH {}\n", GLAD_GL_ARM_shader_framebuffer_fetch ? 1 : 0);
+	header += "#define GPU_PROFILE_MALI 0\n";
+
+	// Desktop GLSL substitutes 0 for a macro that appears in an #if and was
+	// never defined; GLSL ES calls that an error and refuses the shader. So
+	// every name the .glsl files test has to exist, even the ones that are
+	// always off here: features this tree does not carry (the ARM depth and
+	// pixel-local-storage fetches, and the in-shader SRC1 blend path that
+	// stands in for dual-source blending), plus VS_TME, which upstream PCSX2
+	// leaves undefined too and has therefore always meant 0.
+	header += "#define HAS_ARM_DEPTH_FETCH 0\n";
+	header += "#define HAS_EXT_SHADER_PIXEL_LOCAL_STORAGE 0\n";
+	header += "#define PS_BLEND_FACTOR_IN_ALPHA 0\n";
+	header += "#define VS_TME 0\n";
 
 	if (GLAD_GL_ARB_conservative_depth)
 	{
@@ -1696,7 +1831,9 @@ std::string GSDeviceOGL::GenGlslHeader(const std::string_view entry, GLenum type
 		header += "#define DEPTH_FEEDBACK_SUPPORT 2\n"; // Depth as RT
 	}
 
-	if (GLAD_GL_ARB_clip_control)
+	// Must agree with the glClipControl call in Create(): desktop ARB, or ES
+	// with EXT. When neither is there the shaders remap z into [-1,1] instead.
+	if (GLAD_GL_ARB_clip_control || (m_is_gles && GLAD_GL_EXT_clip_control))
 		header += "#define HAS_CLIP_CONTROL 1\n";
 	else
 		header += "#define HAS_CLIP_CONTROL 0\n";
@@ -1727,6 +1864,74 @@ std::string GSDeviceOGL::GenGlslHeader(const std::string_view entry, GLenum type
 	}
 
 	header += macro;
+
+	// The three switches below come from ARMSX2's mobile driver-bug database,
+	// which this tree does not carry; with them off these are the plain
+	// expressions the shaders used to spell inline. They exist as functions so
+	// the .glsl call sites are identical in both trees, which is what lets the
+	// GLES-aware shaders be taken across unmodified.
+	header += "#define DRIVER_REWRITE_BOOLEAN_NEGATION 0\n";
+	header += "#define DRIVER_SCALARIZE_VECTOR_BITWISE_AND 0\n";
+	header += "#define DRIVER_STORE_BITWISE_NEGATION_IN_TEMPORARY 0\n";
+
+	// Emitted last, after every #extension directive above: GLSL requires those
+	// to precede any non-preprocessor token, and these are real definitions.
+	header += R"(
+bool gpu_boolean_not(bool value)
+{
+#if DRIVER_REWRITE_BOOLEAN_NEGATION
+	return value == false;
+#else
+	return !value;
+#endif
+}
+
+uvec2 gpu_bitwise_and(uvec2 a, uvec2 b)
+{
+#if DRIVER_SCALARIZE_VECTOR_BITWISE_AND
+	return uvec2(a.x & b.x, a.y & b.y);
+#else
+	return a & b;
+#endif
+}
+
+uvec3 gpu_bitwise_and(uvec3 a, uvec3 b)
+{
+#if DRIVER_SCALARIZE_VECTOR_BITWISE_AND
+	return uvec3(a.x & b.x, a.y & b.y, a.z & b.z);
+#else
+	return a & b;
+#endif
+}
+
+uvec4 gpu_bitwise_and(uvec4 a, uvec4 b)
+{
+#if DRIVER_SCALARIZE_VECTOR_BITWISE_AND
+	return uvec4(a.x & b.x, a.y & b.y, a.z & b.z, a.w & b.w);
+#else
+	return a & b;
+#endif
+}
+
+ivec3 gpu_bitwise_and(ivec3 a, ivec3 b)
+{
+#if DRIVER_SCALARIZE_VECTOR_BITWISE_AND
+	return ivec3(a.x & b.x, a.y & b.y, a.z & b.z);
+#else
+	return a & b;
+#endif
+}
+
+uvec4 gpu_bitwise_not(uvec4 value)
+{
+#if DRIVER_STORE_BITWISE_NEGATION_IN_TEMPORARY
+	uvec4 result = ~value;
+	return result;
+#else
+	return ~value;
+#endif
+}
+)";
 
 	return header;
 }

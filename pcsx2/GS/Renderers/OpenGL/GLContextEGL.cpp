@@ -89,7 +89,7 @@ std::unique_ptr<GLContext> GLContextEGL::Create(const WindowInfo& wi, std::span<
 	return context;
 }
 
-bool GLContextEGL::CaptureCurrentContext(EGLDisplay* display, EGLContext* context)
+bool GLContextEGL::CaptureCurrentContext(EGLDisplay* display, EGLContext* context, bool* is_gles)
 {
 	// Runs before any GLContextEGL exists, so EGL has to be brought up by
 	// hand, and stays up: the handles handed back here outlive this call, and
@@ -127,9 +127,20 @@ bool GLContextEGL::CaptureCurrentContext(EGLDisplay* display, EGLContext* contex
 		return fail();
 	}
 
+	// Which API the frontend's context speaks decides which one ours has to:
+	// a context can only share objects with one of the same client type.
+	EGLint client_type = EGL_OPENGL_API;
+	if (!eglQueryContext(current_display, current_context, EGL_CONTEXT_CLIENT_TYPE, &client_type))
+	{
+		Console.WarningFmt("eglQueryContext(EGL_CONTEXT_CLIENT_TYPE) failed: 0x{:x}; assuming desktop GL.",
+			eglGetError());
+		client_type = EGL_OPENGL_API;
+	}
+
 	s_capture_holds_egl = true;
 	*display = current_display;
 	*context = current_context;
+	*is_gles = (client_type == EGL_OPENGL_ES_API);
 	return true;
 }
 
@@ -562,10 +573,16 @@ void GLContextEGL::DestroySurface()
 
 bool GLContextEGL::CreateContext(const Version& version, EGLContext share_context)
 {
-	DevCon.WriteLnFmt("Trying GL version {}.{}", version.major_version, version.minor_version);
+	DevCon.WriteLnFmt("Trying GL version {}.{} ({})", version.major_version, version.minor_version,
+		(version.profile == Profile::ES) ? "ES" : ((version.profile == Profile::Core) ? "Core" : "None"));
+
+	const int renderable_type = (version.profile == Profile::ES) ?
+		((version.major_version >= 3) ? EGL_OPENGL_ES3_BIT :
+										((version.major_version == 2) ? EGL_OPENGL_ES2_BIT : EGL_OPENGL_ES_BIT)) :
+		EGL_OPENGL_BIT;
 	const int surface_attribs[] = {
 		EGL_RENDERABLE_TYPE,
-		EGL_OPENGL_BIT,
+		renderable_type,
 		EGL_SURFACE_TYPE,
 		(m_wi.type != WindowInfo::Type::Surfaceless) ? EGL_WINDOW_BIT : 0,
 		EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8,
@@ -610,9 +627,10 @@ bool GLContextEGL::CreateContext(const Version& version, EGLContext share_contex
 		EGL_NONE,
 		0};
 
-	if (!eglBindAPI(EGL_OPENGL_API))
+	if (!eglBindAPI((version.profile == Profile::ES) ? EGL_OPENGL_ES_API : EGL_OPENGL_API))
 	{
-		Console.ErrorFmt("eglBindAPI() failed: 0x{:x}", eglGetError());
+		Console.ErrorFmt("eglBindAPI({}) failed: 0x{:x}",
+			(version.profile == Profile::ES) ? "EGL_OPENGL_ES_API" : "EGL_OPENGL_API", eglGetError());
 		return false;
 	}
 

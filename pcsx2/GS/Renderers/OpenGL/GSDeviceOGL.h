@@ -162,6 +162,14 @@ private:
 
 	bool m_disable_download_pbo = false;
 
+	// Whether the context is GL ES rather than desktop GL. ES is missing whole
+	// features this renderer otherwise assumes, so it is not a variant of the
+	// desktop path so much as a set of holes the code below works around.
+	bool m_is_gles = false;
+	// Desktop GL always has dual-source blending; ES only has it as an
+	// extension. Recorded because the shader header has to say when it is gone.
+	bool m_dual_source_blend = true;
+
 	GLuint m_fbo = 0; // frame buffer container
 	GLuint m_fbo_read = 0; // frame buffer container only for reading
 	GLuint m_fbo_write = 0;	// frame buffer container only for writing
