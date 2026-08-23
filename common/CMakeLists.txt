@@ -177,12 +177,17 @@ else()
 		)
 		target_link_libraries(common PRIVATE
 			${DBUS_LINK_LIBRARIES}
+		)
+	else()
+		target_link_libraries(common PRIVATE log)
+	endif()
+
+	if(X11_API)
+		target_link_libraries(common PRIVATE
 			X11::X11
 			X11::Xrandr
 			X11::Xi
 		)
-	else()
-		target_link_libraries(common PRIVATE log)
 	endif()
 	if(USE_BACKTRACE)
 		target_compile_definitions(common PRIVATE "HAS_LIBBACKTRACE=1")
@@ -222,6 +227,12 @@ target_link_libraries(common PRIVATE
 	WebP::libwebp
 	cpuinfo
 )
+
+if(TARGET WebP::libwebp)
+	target_link_libraries(common PRIVATE
+		${CMAKE_BINARY_DIR}/deps/lib/libsharpyuv.a
+	)
+endif()
 
 target_link_libraries(common PUBLIC
 	fmt::fmt

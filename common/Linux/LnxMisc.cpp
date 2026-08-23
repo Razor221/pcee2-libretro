@@ -20,8 +20,10 @@
 #include <unistd.h>
 #ifndef __ANDROID__
 #include <dbus/dbus.h>
+#ifdef X11_API
 #include <X11/Xlib.h>
 #include <X11/extensions/XInput2.h>
+#endif
 #endif
 
 #include <cstdlib>
@@ -228,6 +230,7 @@ bool Common::InhibitScreensaver(bool inhibit)
 	return SetScreensaverInhibitDBus(inhibit, "PCSX2", "PCSX2 VM is running.");
 }
 
+#ifdef X11_API
 void Common::SetMousePosition(int x, int y)
 {
 	Display* display = XOpenDisplay(nullptr);
@@ -332,6 +335,7 @@ void Common::DetachMousePositionCb()
 		mouseThread.join();
 	}
 }
+#endif
 
 #else // __ANDROID__
 

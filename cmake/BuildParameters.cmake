@@ -92,7 +92,7 @@ mark_as_advanced(CMAKE_C_FLAGS_DEVEL CMAKE_CXX_FLAGS_DEVEL CMAKE_LINKER_FLAGS_DE
 # Every build but Android's is a native one, where the host processor is also
 # the target. Android cross-compiles, so there the toolchain's target processor
 # is what decides which recompiler gets built.
-if(ANDROID)
+if(CMAKE_CROSSCOMPILING)
 	set(PCSX2_TARGET_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
 else()
 	set(PCSX2_TARGET_PROCESSOR "${CMAKE_HOST_SYSTEM_PROCESSOR}")
@@ -152,9 +152,16 @@ elseif("${PCSX2_TARGET_PROCESSOR}" STREQUAL "arm64" OR "${PCSX2_TARGET_PROCESSOR
 	# If we're running on Linux, we need to detect the page/cache line size.
 	# It could be a virtual machine with 4K pages, or 16K with Asahi.
 	if(LINUX)
-		detect_page_size()
+		if(CMAKE_CROSSCOMPILING)
+			# Cannot execute target binaries during a cross compile.
+			set(HOST_PAGE_SIZE 4096)
+			set(HOST_CACHE_LINE_SIZE 64)
+		else()
+			detect_page_size()
+			detect_cache_line_size()
+		endif()
+
 		list(APPEND PCSX2_DEFS OVERRIDE_HOST_PAGE_SIZE=${HOST_PAGE_SIZE})
-		detect_cache_line_size()
 		list(APPEND PCSX2_DEFS OVERRIDE_HOST_CACHE_LINE_SIZE=${HOST_CACHE_LINE_SIZE})
 	endif()
 	
