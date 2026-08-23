@@ -57,6 +57,16 @@ include:
   - project: 'libretro-infrastructure/ci-templates'
     file: '/android-cmake.yml'
 
+  # macOS: same story as Linux — the Apple runners carry none of PCSX2's pinned
+  # dependency versions, so the jobs below build them from source first with
+  # scripts/build-deps-macos.sh. Both slices are built, x86_64 by cross-compiling
+  # (the buildbot's Intel and Apple Silicon runners carry different tags, so the
+  # two templates pick the machine).
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/osx-cmake-x86.yml'
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/osx-cmake-arm64.yml'
+
 # The stock libretro build images are ancient Ubuntu (xenial/bionic): their
 # CMake (3.20), gcc, and system libs (PNG 1.2, zstd, webp, lz4) are far too old
 # for PCSX2's pinned versions (PNG 1.6.40, zstd 1.5.5, ...). Override the image
@@ -99,6 +109,17 @@ include:
 # The Android image has the NDK but not the tools the dependency recipe drives,
 # and none of the libraries either - everything it needs is built from source
 # into $CI_PROJECT_DIR/deps first, exactly like the Windows cross-build.
+.pcee2-deps-macos: &pcee2-deps-macos
+  # Replaces the osx template's before_script, so NUMPROC has to be set here too
+  # — and with sysctl, since `nproc` is a coreutils binary that may not be on a
+  # stock macOS runner. The deps prefix is per-slice: a static library of the
+  # wrong architecture fails at link, not at configure, so an x86_64 and an
+  # arm64 build must never share one.
+  - export NUMPROC=$(($(sysctl -n hw.ncpu)/5))
+  - brew list ninja >/dev/null 2>&1 || brew install ninja
+  - brew list nasm >/dev/null 2>&1 || brew install nasm
+  - OSX_ARCH=$ARCH bash pcee2-libretro/scripts/build-deps-macos.sh "$CI_PROJECT_DIR/deps"
+
 .pcee2-setup-android: &pcee2-setup-android
   - export DEBIAN_FRONTEND=noninteractive
   - apt-get update
@@ -205,6 +226,38 @@ libretro-build-windows-x64:
       - deps/
   variables:
     API_LEVEL: 24
+
+# macOS 64-bit (Intel) and ARM64 (Apple Silicon). Both are new targets for
+# pcee2: the x86_64 slice is what .github/workflows/libretro_builds.yml already
+# builds on every push, the arm64 one runs the interpreter (pcsx2/arm64 is
+# recompiler stubs), so it is slow but complete. Kept non-blocking until the
+# buildbot has run them green, like the Windows job above.
+#
+# The deps build is long on a cold runner; the cache keeps it to the first
+# pipeline. Keys are per-slice for the same reason the prefixes are.
+libretro-build-osx-x64:
+  allow_failure: true
+  extends:
+    - .libretro-osx-cmake-x86
+    - .core-defs
+  cache:
+    key: "pcee2-deps-osx-x64"
+    paths:
+      - deps/
+  before_script:
+    - *pcee2-deps-macos
+
+libretro-build-osx-arm64:
+  allow_failure: true
+  extends:
+    - .libretro-osx-cmake-arm64
+    - .core-defs
+  cache:
+    key: "pcee2-deps-osx-arm64"
+    paths:
+      - deps/
+  before_script:
+    - *pcee2-deps-macos
 
 libretro-build-android-arm64-v8a:
   extends:

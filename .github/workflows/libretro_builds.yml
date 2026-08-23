@@ -535,6 +535,82 @@ jobs:
           name: pcee2_libretro-macos-x86_64
           path: artifact/*
 
+  build_macos_arm64:
+    name: "macOS arm64"
+    runs-on: macos-15
+    continue-on-error: true
+    timeout-minutes: 320
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Packages
+        run: |
+          if ! brew install ninja nasm; then
+            brew update
+            brew install ninja nasm
+          fi
+
+      - name: Restore Dependencies Cache
+        id: cache-deps
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/deps
+          key: macos-arm64-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh', 'pcee2-libretro/scripts/deps.versions') }}
+
+      - name: Build Dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: OSX_ARCH=arm64 bash pcee2-libretro/scripts/build-deps-macos.sh "$HOME/deps"
+
+      # save immediately so a later timeout can't lose the deps build
+      - name: Save Dependencies Cache
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/deps
+          key: macos-arm64-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-macos.sh', 'pcee2-libretro/scripts/deps.versions') }}
+
+      - name: Generate CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_PREFIX_PATH="$HOME/deps" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64" \
+            -DDISABLE_ADVANCE_SIMD=ON \
+            -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF -DENABLE_LIBRETRO=ON \
+            -DSHADERC_STATIC=ON "-DSHADERC_LIBRARY=$HOME/deps/lib/libshaderc_combined.a"
+
+      - name: Build Core
+        run: cmake --build build --target pcee2_libretro --parallel
+
+      - name: Prepare Artifact
+        run: |
+          mkdir artifact
+          cp build/bin/pcee2_libretro.dylib pcee2-libretro/pcee2_libretro.info artifact/
+          # runtime-dlopen'd Vulkan driver (found next to the core via DynamicLibrary)
+          cp "$HOME"/deps/lib/libMoltenVK.dylib artifact/
+          cd artifact
+
+          # The core must be self-contained apart from the dlopen'd libs above;
+          # fail loudly if any deps-prefix install names leaked in.
+          if otool -L pcee2_libretro.dylib | grep -q "/Users/runner/deps"; then
+            echo "ERROR: core still references deps dylibs:" && otool -L pcee2_libretro.dylib
+            exit 1
+          fi
+
+          for f in *.dylib; do
+            codesign -f -s - "$f"
+          done
+          ls -la
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pcee2_libretro-macos-arm64
+          path: artifact/*
+
   release:
     name: "Attach Release Assets"
     # A release ships the x86_64 Linux and the Windows core, so both must build;
@@ -544,7 +620,7 @@ jobs:
     # bookworm jobs are in needs (not in the if) purely to order the release
     # after them, so their aarch64 cores exist when artifacts are downloaded;
     # !cancelled() means a bookworm failure still lets the release run.
-    needs: [build_linux, build_windows, build_macos, build_linux_arm64_bookworm, build_linux_arm64_bookworm_16k]
+    needs: [build_linux, build_windows, build_macos, build_macos_arm64, build_linux_arm64_bookworm, build_linux_arm64_bookworm_16k]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

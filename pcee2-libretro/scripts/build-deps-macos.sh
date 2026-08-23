@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Builds static x86_64 dependencies for the PCEE2 libretro core into $1.
+# Builds the static dependencies for the PCEE2 libretro core into $1.
 # Everything is static except MoltenVK (prebuilt, dlopen'd Vulkan
-# driver), the only dylib.
+# driver), the only dylib — its release tarball is a universal binary, so it
+# needs no slice of its own.
+#
+# The architecture follows $OSX_ARCH (default x86_64), which has to match the
+# CMAKE_OSX_ARCHITECTURES the core is configured with: a static library of the
+# wrong slice fails at link, not at configure.
 set -e
 
 if [ "$#" -ne 1 ]; then
@@ -12,14 +17,17 @@ fi
 PREFIX=$(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$1")
 mkdir -p "$PREFIX"
 NPROCS="$(getconf _NPROCESSORS_ONLN)"
+OSX_ARCH="${OSX_ARCH:-x86_64}"
 export MACOSX_DEPLOYMENT_TARGET=11.0
+echo "Building dependencies for $OSX_ARCH into $PREFIX"
+
 
 # Revisions live in deps.versions, shared with the other platform scripts and
 # with deps/CMakeLists.txt, so the paths cannot drift apart.
 . "$(cd "$(dirname "$0")" && pwd)/deps.versions"
 
 COMMON=(-DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$PREFIX" "-DCMAKE_PREFIX_PATH=$PREFIX"
-	-DBUILD_SHARED_LIBS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_OSX_ARCHITECTURES=x86_64 -G Ninja)
+	-DBUILD_SHARED_LIBS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 "-DCMAKE_OSX_ARCHITECTURES=$OSX_ARCH" -G Ninja)
 
 mkdir -p deps-build
 cd deps-build
@@ -83,7 +91,7 @@ if [ "$(git -C shaderc/third_party/glslang rev-parse HEAD)" != "$GLSLANG" ]; the
 	git -C shaderc/third_party/glslang checkout --detach FETCH_HEAD
 fi
 cmake -S shaderc -B shaderc/b -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$PREFIX" \
-	-DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_OSX_ARCHITECTURES=x86_64 -G Ninja \
+	-DCMAKE_POLICY_VERSION_MINIMUM=3.5 "-DCMAKE_OSX_ARCHITECTURES=$OSX_ARCH" -G Ninja \
 	-DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DSHADERC_SKIP_COPYRIGHT_CHECK=ON
 cmake --build shaderc/b --parallel "$NPROCS" --target shaderc_combined
 mkdir -p "$PREFIX/lib" "$PREFIX/include"
