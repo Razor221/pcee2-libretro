@@ -10,7 +10,7 @@
 #include "GS/GSPerfMon.h"
 #include "GS/GSUtil.h"
 #include "GSDumpReplayer.h"
-#ifdef ENABLE_VULKAN
+#if defined(ENABLE_VULKAN) || defined(ENABLE_OPENGL)
 #include "GS/Renderers/Common/GSLibretro.h"
 #endif
 #include "Host.h"
