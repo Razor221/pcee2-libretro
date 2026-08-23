@@ -48,6 +48,7 @@
 #include "pcsx2/Config.h"
 #include "pcsx2/GS.h"
 #include "pcsx2/GS/GS.h"
+#include "pcsx2/GS/Renderers/Common/GSRenderer.h"
 #include "pcsx2/Host/AudioStream.h"
 #include "pcsx2/SIO/Pad/PadDualshock2.h"
 #include "pcsx2/SPU2/spu2.h"
@@ -1329,6 +1330,14 @@ static void OnGLContextDestroy(void)
 	{
 		std::atomic_bool gs_released{false};
 		MTGS::RunOnGSThread([&gs_released]() {
+			// Retire the queued primitives first. GSreopen() would flush them
+			// itself, but that runs after the context is gone, and a draw
+			// issued then writes through a vertex buffer whose mapping went
+			// with it (SIGSEGV in IASetVertexBuffer). Here the context is
+			// still live and the draws land normally.
+			if (g_gs_renderer)
+				g_gs_renderer->Flush(GSState::GSFlushReason::GSREOPEN);
+
 			if (g_gs_device && g_gs_device->GetRenderAPI() == RenderAPI::OpenGL)
 				static_cast<GSDeviceOGL*>(g_gs_device.get())->AbandonContext(true);
 			gs_released.store(true, std::memory_order_release);
@@ -1944,7 +1953,14 @@ bool retro_load_game(const struct retro_game_info* game)
 		s_gl_hw_render.depth = false;
 		s_gl_hw_render.stencil = false;
 		s_gl_hw_render.bottom_left_origin = true;
-		s_gl_hw_render.cache_context = true;
+		// Deliberately false, and it matters more than it looks. Asking
+		// RetroArch to preserve the context makes it skip context_destroy when
+		// it rebuilds its video driver anyway — and context_destroy is the only
+		// notice that arrives while the context is still usable. Without it the
+		// GS thread's context can never be released (see the comment there),
+		// so the picture is stuck until the content is reloaded. Saying the
+		// context is expendable gets the callback, and with it a clean rebuild.
+		s_gl_hw_render.cache_context = false;
 		if (!s_environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &s_gl_hw_render))
 		{
 			Console.Warning("Frontend refused an OpenGL 3.3 core HW context; falling back to readback present.");
