@@ -815,12 +815,19 @@ void LibretroHost::ReadCoreOptions(bool startup)
 		return fallback;
 	};
 
+	// The default has to name a renderer this build actually has: a core without
+	// Vulkan still reads a stale pcsx2_renderer = "vulkan" out of the frontend's
+	// config, and on the readback path there is no HW type to clamp it back to.
 #if defined(ENABLE_VULKAN)
 	const char* renderer = get_option("pcsx2_renderer", "vulkan");
+	GSRendererType renderer_type = GSRendererType::VK;
 #elif defined(ENABLE_OPENGL)
 	const char* renderer = get_option("pcsx2_renderer", "opengl");
+	GSRendererType renderer_type = GSRendererType::OGL;
+#else
+	const char* renderer = get_option("pcsx2_renderer", "software");
+	GSRendererType renderer_type = GSRendererType::SW;
 #endif
-	GSRendererType renderer_type = GSRendererType::VK;
 	if (std::strcmp(renderer, "software") == 0)
 		renderer_type = GSRendererType::SW;
 #ifdef ENABLE_OPENGL
@@ -1897,12 +1904,14 @@ bool retro_load_game(const struct retro_game_info* game)
 	{
 		retro_variable var = {"pcsx2_renderer", nullptr};
 #if defined(ENABLE_VULKAN)
-		const char* const renderer =
-			(s_environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) ? var.value : "vulkan";
+		const char* const fallback_renderer = "vulkan";
 #elif defined(ENABLE_OPENGL)
-		const char* const renderer =
-			(s_environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) ? var.value : "opengl";
+		const char* const fallback_renderer = "opengl";
+#else
+		const char* const fallback_renderer = "software";
 #endif
+		const char* const renderer =
+			(s_environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) ? var.value : fallback_renderer;
 		if (std::getenv("PCEE2_READBACK"))
 			s_hw_render = HWRender::None;
 		else if (std::strcmp(renderer, "opengl") == 0)
@@ -2154,7 +2163,7 @@ void retro_unload_game(void)
 #endif
 
 #ifdef ENABLE_OPENGL
-	else if (s_hw_render == HWRender::OpenGL)
+	if (s_hw_render == HWRender::OpenGL)
 	{
 		GLLibretro::Shutdown();
 		GLLibretro::Active = false;
@@ -2637,16 +2646,21 @@ void retro_run(void)
 		}
 	}
 #endif
-	else if (got_frame && s_frame_width > 0 && s_frame_height > 0 && s_video_cb)
+	// Readback path. Written as its own condition rather than an else on the blocks
+	// above, which compile out one by one as the renderers are switched off.
+	if (!HWRenderActive())
 	{
-		s_video_cb(s_frame_pixels.data(), s_frame_width, s_frame_height, s_frame_width * sizeof(u32));
-	}
-	else if (s_video_cb)
-	{
-		// no frame produced yet (still booting); duplicate previous frame
-		s_video_cb(nullptr, s_frame_width ? s_frame_width : DEFAULT_WIDTH,
-			s_frame_height ? s_frame_height : DEFAULT_HEIGHT,
-			(s_frame_width ? s_frame_width : DEFAULT_WIDTH) * sizeof(u32));
+		if (got_frame && s_frame_width > 0 && s_frame_height > 0 && s_video_cb)
+		{
+			s_video_cb(s_frame_pixels.data(), s_frame_width, s_frame_height, s_frame_width * sizeof(u32));
+		}
+		else if (s_video_cb)
+		{
+			// no frame produced yet (still booting); duplicate previous frame
+			s_video_cb(nullptr, s_frame_width ? s_frame_width : DEFAULT_WIDTH,
+				s_frame_height ? s_frame_height : DEFAULT_HEIGHT,
+				(s_frame_width ? s_frame_width : DEFAULT_WIDTH) * sizeof(u32));
+		}
 	}
 
 	// CPU thread is parked again at this point; safe to drain the audio buffer

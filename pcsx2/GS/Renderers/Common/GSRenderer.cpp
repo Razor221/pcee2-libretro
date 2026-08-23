@@ -10,9 +10,7 @@
 #include "GS/GSPerfMon.h"
 #include "GS/GSUtil.h"
 #include "GSDumpReplayer.h"
-#if defined(ENABLE_VULKAN) || defined(ENABLE_OPENGL)
 #include "GS/Renderers/Common/GSLibretro.h"
-#endif
 #include "Host.h"
 #include "PerformanceMetrics.h"
 #include "pcsx2/Config.h"
