@@ -36,6 +36,15 @@ else()
 	# libwebp carries SharpYUV itself, and linking its shared companion would
 	# just put another SONAME in the core for nothing.
 	find_library(SHARPYUV_LIBRARY NAMES libsharpyuv.a sharpyuv.lib)
+
+	# A cross-compile confines find_library to the sysroot, so it can miss the
+	# deps tree even when the deps tree is exactly where libwebp came from
+	# (webOS). Fall back to it -- but only when it is genuinely there, which is
+	# only when this build put it there. PCEE2_BUILD_DEPS runs at configure
+	# time, before this file, so by now the answer is settled.
+	if(NOT SHARPYUV_LIBRARY AND EXISTS "${CMAKE_BINARY_DIR}/deps/lib/libsharpyuv.a")
+		set(SHARPYUV_LIBRARY "${CMAKE_BINARY_DIR}/deps/lib/libsharpyuv.a")
+	endif()
 endif()
 find_package(SDL3 3.2.6 REQUIRED)
 find_package(Freetype 2.10 REQUIRED) # 2.10 is the first with COLRv0 support, which we need for rendering emoji
