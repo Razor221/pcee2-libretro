@@ -284,7 +284,7 @@ bool GSDeviceOGL::Create(GSVSyncMode vsync_mode, bool allow_present_throttle)
 
 	if (!GSConfig.DisableShaderCache)
 	{
-		if (!m_shader_cache.Open())
+		if (!m_shader_cache.Open(m_is_gles))
 			Console.Warning("GL: Shader cache failed to open.");
 	}
 	else
