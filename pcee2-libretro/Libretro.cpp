@@ -662,6 +662,12 @@ void LibretroHost::RegisterCoreOptions()
 			{{"disabled", nullptr}, {"enabled", nullptr}, {nullptr, nullptr}}, "disabled"},
 		{"pcsx2_cas_mode", "Contrast Adaptive Sharpening", nullptr, nullptr, nullptr, "graphics",
 			{{"disabled", "Disabled"}, {"sharpen", "Sharpen Only"}, {nullptr, nullptr}}, "disabled"},
+		{"pcsx2_skip_duplicate_frames", "Skip Presenting Duplicate Frames", nullptr,
+			"Don't hand the frontend a frame the GS never redrew - a 30fps game then delivers 30 "
+			"unique frames instead of 60 with every second one repeated. Turn this off if a frame "
+			"generation or interpolation filter needs every frame delivered as its own.",
+			nullptr, "graphics",
+			{{"enabled", nullptr}, {"disabled", nullptr}, {nullptr, nullptr}}, "enabled"},
 		{"pcsx2_cas_sharpness", "CAS Sharpness", nullptr, nullptr, nullptr, "graphics",
 			{{"10", nullptr}, {"20", nullptr}, {"30", nullptr}, {"40", nullptr}, {"50", nullptr}, {"60", nullptr},
 				{"70", nullptr}, {"80", nullptr}, {"90", nullptr}, {"100", nullptr}, {nullptr, nullptr}},
@@ -783,6 +789,9 @@ void LibretroHost::RegisterCoreOptions()
 	// legacy fallback: "Description; value1|value2" strings
 	static std::vector<std::string> legacy_storage;
 	legacy_storage.clear();
+	// legacy[] holds c_str() pointers into these strings, so the storage must not
+	// reallocate while it is being filled (a moved short string changes address)
+	legacy_storage.reserve(std::size(definitions));
 	std::vector<retro_variable> legacy;
 	for (const retro_core_option_v2_definition& def : definitions)
 	{
@@ -937,6 +946,8 @@ void LibretroHost::ReadCoreOptions(bool startup)
 			static_cast<int>(GSCASMode::SharpenOnly) :
 			static_cast<int>(GSCASMode::Disabled));
 	s_settings_interface.SetIntValue("EmuCore/GS", "CASSharpness", get_int_option("pcsx2_cas_sharpness", "50"));
+	s_settings_interface.SetBoolValue("EmuCore/GS", "SkipDuplicateFrames",
+		std::strcmp(get_option("pcsx2_skip_duplicate_frames", "enabled"), "enabled") == 0);
 
 	// patches
 	const bool widescreen = std::strcmp(get_option("pcsx2_widescreen_patches", "disabled"), "enabled") == 0;
