@@ -6,6 +6,9 @@
 #include "Host.h"
 #include "IconsFontAwesome.h"
 #include "vtlb.h"
+#ifdef PCSX2_EMBEDDED_RESOURCES
+#include "EmbeddedResources.h"
+#endif
 
 #include "common/Console.h"
 #include "common/EnumOps.h"
@@ -1020,14 +1023,31 @@ void GameDatabase::initDatabase()
 	const std::string path(Path::Combine(EmuFolders::Resources, GAMEDB_YAML_FILE_NAME));
 	const std::string name(GAMEDB_YAML_FILE_NAME);
 
-	const std::optional<std::string> buffer = FileSystem::ReadFileToString(path.c_str());
-	if (!buffer.has_value())
+	// The built-in copy is static data; the on-disk one has to be kept alive
+	// alongside it, since the parsed tree borrows from whichever is used.
+	std::string_view yaml_text;
+	std::optional<std::string> buffer;
+
+#ifdef PCSX2_EMBEDDED_RESOURCES
+	if (EmbeddedResourcesPreferred())
 	{
-		Console.Error("GameDB: Unable to open GameDB file, file does not exist.");
-		return;
+		if (const std::optional<std::string_view> embedded = GetEmbeddedResource(GAMEDB_YAML_FILE_NAME))
+			yaml_text = *embedded;
+	}
+#endif
+
+	if (yaml_text.empty())
+	{
+		buffer = FileSystem::ReadFileToString(path.c_str());
+		if (!buffer.has_value())
+		{
+			Console.Error("GameDB: Unable to open GameDB file, file does not exist.");
+			return;
+		}
+		yaml_text = *buffer;
 	}
 
-	const ryml::csubstr yaml = ryml::to_csubstr(*buffer);
+	const ryml::csubstr yaml = ryml::to_csubstr(yaml_text);
 
 	Error error;
 	std::optional<ryml::Tree> tree = ParseYAMLFromString(yaml, ryml::to_csubstr(name), &error, true);

@@ -22,13 +22,19 @@ set(font_files
 	"fonts/RobotoMono-Medium.ttf"
 	"fonts/fa-solid-900.ttf"
 	"fonts/promptfont.otf")
-set(shader_files ${shader_files} ${font_files})
+# GameIndex.yaml is not needed to boot, but without it every game runs without
+# its fixes, which reads as "the core is broken on this game" rather than as a
+# missing optional file - and on Android the resources directory is awkward or
+# impossible to populate. It is the one large resource worth the binary size.
+set(database_files
+	"GameIndex.yaml")
+set(shader_files ${shader_files} ${font_files} ${database_files})
 list(SORT shader_files)
 list(LENGTH shader_files shader_count)
 if(shader_count EQUAL 0)
 	message(FATAL_ERROR "No resources found under ${RESOURCES_DIR}")
 endif()
-foreach(needed ${font_files})
+foreach(needed ${font_files} ${database_files})
 	if(NOT EXISTS "${RESOURCES_DIR}/${needed}")
 		message(FATAL_ERROR "${needed} is missing from ${RESOURCES_DIR}")
 	endif()

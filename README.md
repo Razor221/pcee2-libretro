@@ -66,7 +66,7 @@ workflow.
 ## Setup
 
 1. Put a PS2 BIOS dump into `<retroarch system dir>/pcsx2/bios/`.
-2. Optional: copy the `resources` directory from a PCSX2 installation of the same version (or from `bin/resources` of this repo) to `<retroarch system dir>/pcsx2/resources/`. The shaders and fonts the core cannot start without are compiled into it, so this only adds the game database and patches; `PCEE2_EXTERNAL_RESOURCES=1` makes the on-disk copies win over the built-in ones.
+2. Optional: copy the `resources` directory from a PCSX2 installation of the same version (or from `bin/resources` of this repo) to `<retroarch system dir>/pcsx2/resources/`. The shaders and fonts the core cannot start without, and the `GameIndex.yaml` game database that carries the per-game fixes, are all compiled into it, so this only adds the remaining optional files; `PCEE2_EXTERNAL_RESOURCES=1` makes the on-disk copies win over the built-in ones, which is how you use a newer game database than the one the core was built with.
 3. For built-in game patches (including the widescreen / no-interlacing options), download [`patches.zip`](https://github.com/PCSX2/pcsx2_patches/releases/latest/download/patches.zip) into `<retroarch system dir>/pcsx2/resources/patches.zip`.
 4. Load a disc image (`.iso`, `.chd`, `.cso`, `.gz`, `.bin`, `.mdf`, `.nrg`, `.elf`) with the core.
 5. Optional: copy your standalone `PCSX2.ini` to `<retroarch system dir>/pcsx2/inis/PCSX2.ini` — the core adopts its emulation settings (EmuCore, speed hacks, CPU, GS, game fixes, memory cards, DEV9 network/HDD) as the baseline. Core options still override their respective settings.

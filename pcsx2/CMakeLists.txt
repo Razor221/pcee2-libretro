@@ -1141,7 +1141,8 @@ if(ENABLE_LIBRETRO)
 		"${CMAKE_SOURCE_DIR}/bin/resources/fonts/Roboto-Regular.ttf"
 		"${CMAKE_SOURCE_DIR}/bin/resources/fonts/RobotoMono-Medium.ttf"
 		"${CMAKE_SOURCE_DIR}/bin/resources/fonts/fa-solid-900.ttf"
-		"${CMAKE_SOURCE_DIR}/bin/resources/fonts/promptfont.otf")
+		"${CMAKE_SOURCE_DIR}/bin/resources/fonts/promptfont.otf"
+		"${CMAKE_SOURCE_DIR}/bin/resources/GameIndex.yaml")
 	add_custom_command(
 		OUTPUT "${pcsx2GSShaderResources}"
 		COMMAND ${CMAKE_COMMAND}
