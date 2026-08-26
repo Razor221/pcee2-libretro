@@ -1047,7 +1047,9 @@ void GameDatabase::initDatabase()
 		yaml_text = *buffer;
 	}
 
-	const ryml::csubstr yaml = ryml::to_csubstr(yaml_text);
+	// Built from the pointer/length pair rather than through to_csubstr(): the
+	// string_view overload resolves to a std::span one that ryml only declares.
+	const ryml::csubstr yaml(yaml_text.data(), yaml_text.size());
 
 	Error error;
 	std::optional<ryml::Tree> tree = ParseYAMLFromString(yaml, ryml::to_csubstr(name), &error, true);
