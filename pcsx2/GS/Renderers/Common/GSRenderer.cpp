@@ -30,6 +30,7 @@
 #include <deque>
 #include <thread>
 #include <mutex>
+#include <atomic>
 
 static void DumpGSPrivRegs(const GSPrivRegSet& r, const std::string& filename);
 
@@ -699,23 +700,29 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 	const int fb_sprite_blits = g_perfmon.GetDisplayFramebufferSpriteBlits();
 	const bool fb_sprite_frame = (fb_sprite_blits > 0);
 
+	// Evaluate unique frame dynamically for libretro pacing
+	bool is_unique_frame = true;
+	switch (PerformanceMetrics::GetInternalFPSMethod())
+	{
+	case PerformanceMetrics::InternalFPSMethod::GSPrivilegedRegister:
+		is_unique_frame = registers_written;
+		break;
+	case PerformanceMetrics::InternalFPSMethod::DISPFBBlit:
+		is_unique_frame = fb_sprite_frame;
+		break;
+	default:
+		is_unique_frame = true;
+		break;
+	}
+
+	// Export to the libretro frontend
+	extern std::atomic<bool> g_libretro_is_unique_frame;
+	g_libretro_is_unique_frame.store(is_unique_frame, std::memory_order_release);
+
 	bool skip_frame = false;
 	if (GSConfig.SkipDuplicateFrames && !GSCapture::IsCapturingVideo())
 	{
-		bool is_unique_frame;
-		switch (PerformanceMetrics::GetInternalFPSMethod())
-		{
-		case PerformanceMetrics::InternalFPSMethod::GSPrivilegedRegister:
-			is_unique_frame = registers_written;
-			break;
-		case PerformanceMetrics::InternalFPSMethod::DISPFBBlit:
-			is_unique_frame = fb_sprite_frame;
-			break;
-		default:
-			is_unique_frame = true;
-			break;
-		}
-
+		// Use the unconditionally calculated is_unique_frame
 		if (!is_unique_frame && m_skipped_duplicate_frames < MAX_SKIPPED_DUPLICATE_FRAMES)
 		{
 			m_skipped_duplicate_frames++;

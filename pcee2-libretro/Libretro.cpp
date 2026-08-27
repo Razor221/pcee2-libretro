@@ -88,6 +88,11 @@
 
 #include "fmt/format.h"
 
+#include <atomic>
+
+// Shared flag from GSRenderer.cpp
+std::atomic<bool> g_libretro_is_unique_frame{true};
+
 namespace LibretroHost
 {
 	// libretro callbacks
@@ -3106,6 +3111,13 @@ void Host::PumpMessagesOnCPUThread()
 
 	if (!s_running.load(std::memory_order_acquire))
 		return;
+
+	// Flycast-style seamless dynamic pacing: 
+	// If the GS flagged a duplicate frame, return early to process the next VM frame.
+	// This naturally paces retro_run() without forcing an expensive AV_INFO driver reset.
+	if (!g_libretro_is_unique_frame.load(std::memory_order_acquire)) {
+		return;
+	}
 
 	// track the VM's vertical frequency for PAL/NTSC av_info reporting
 	const float fps = VMManager::GetFrameRate();
