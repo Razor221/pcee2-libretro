@@ -715,10 +715,6 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 		break;
 	}
 
-	// Export to the libretro frontend
-	extern std::atomic<bool> g_libretro_is_unique_frame;
-	g_libretro_is_unique_frame.store(is_unique_frame, std::memory_order_release);
-
 	bool skip_frame = false;
 	if (GSConfig.SkipDuplicateFrames && !GSCapture::IsCapturingVideo())
 	{
@@ -733,6 +729,10 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 			m_skipped_duplicate_frames = 0;
 		}
 	}
+
+	// Export to the libretro frontend
+	extern std::atomic<bool> g_libretro_skip_frame;
+	g_libretro_skip_frame.store(skip_frame, std::memory_order_release);
 
 	const bool blank_frame = !Merge(field);
 

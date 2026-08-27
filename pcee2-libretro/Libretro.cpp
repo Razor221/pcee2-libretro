@@ -91,7 +91,7 @@
 #include <atomic>
 
 // Shared flag from GSRenderer.cpp
-std::atomic<bool> g_libretro_is_unique_frame{true};
+std::atomic<bool> g_libretro_skip_frame{false};
 
 namespace LibretroHost
 {
@@ -3113,9 +3113,9 @@ void Host::PumpMessagesOnCPUThread()
 		return;
 
 	// Flycast-style seamless dynamic pacing: 
-	// If the GS flagged a duplicate frame, return early to process the next VM frame.
+	// If the GS flagged a frame skip (respecting the core option), return early to process the next VM frame.
 	// This naturally paces retro_run() without forcing an expensive AV_INFO driver reset.
-	if (!g_libretro_is_unique_frame.load(std::memory_order_acquire)) {
+	if (g_libretro_skip_frame.load(std::memory_order_acquire)) {
 		return;
 	}
 
