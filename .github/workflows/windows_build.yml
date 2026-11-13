@@ -1,0 +1,96 @@
+name: Windows Build
+
+on:
+  push:
+    branches:
+      - new-flycast-method-implementation
+  workflow_dispatch:
+
+jobs:
+  build_windows:
+    name: "Windows x64 (MinGW)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build python3 git \
+            gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
+
+      - name: MXE-style Toolchain
+        run: |
+          tc="$RUNNER_TEMP/mingw"; mkdir -p "$tc/bin"
+          for t in gcc g++ c++ cpp; do ln -s "$(command -v x86_64-w64-mingw32-$t-posix)" "$tc/bin/x86_64-w64-mingw32.static-$t"; done
+          for t in ar ranlib nm ld strip windres dlltool objcopy objdump; do ln -s "$(command -v x86_64-w64-mingw32-$t)" "$tc/bin/x86_64-w64-mingw32.static-$t"; done
+          cat > "$tc/toolchain.cmake" <<'TC'
+          set(CMAKE_SYSTEM_NAME Windows)
+          set(CMAKE_SYSTEM_PROCESSOR x86_64)
+          set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc-posix)
+          set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++-posix)
+          set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
+          set(CMAKE_FIND_ROOT_PATH /usr/x86_64-w64-mingw32 $ENV{PCEE2_DEPS})
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+          set(BUILD_SHARED_LIBS OFF CACHE BOOL "")
+          set(CMAKE_EXE_LINKER_FLAGS_INIT "-static")
+          set(CMAKE_SHARED_LINKER_FLAGS_INIT "-static -static-libgcc -static-libstdc++")
+          TC
+          cat > "$tc/bin/x86_64-w64-mingw32.static-cmake" <<'WR'
+          #!/bin/sh
+          case "$1" in
+            --build|--install|-E|-P) exec cmake "$@" ;;
+            *) exec cmake -DCMAKE_TOOLCHAIN_FILE="$(dirname "$0")/../toolchain.cmake" "$@" ;;
+          esac
+          WR
+          chmod +x "$tc/bin/x86_64-w64-mingw32.static-cmake"
+          echo "$tc/bin" >> "$GITHUB_PATH"
+          echo "PCEE2_DEPS=$PWD/deps" >> "$GITHUB_ENV"
+
+      - name: Cache Dependencies
+        id: cache-deps
+        uses: actions/cache@v6
+        with:
+          path: deps
+          key: windows-mingw-libretro-static-deps ${{ hashFiles('pcee2-libretro/scripts/build-deps-linux.sh', 'pcee2-libretro/scripts/deps.versions') }}
+
+      - name: Build Dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        env:
+          CMAKE: x86_64-w64-mingw32.static-cmake
+          HOST: x86_64-w64-mingw32.static
+          PCEE2_SDL_STATIC: "1"
+        run: bash pcee2-libretro/scripts/build-deps-linux.sh "$PWD/deps"
+
+      - name: Generate CMake
+        run: |
+          x86_64-w64-mingw32.static-cmake -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_LIBRETRO=ON -DENABLE_QT_UI=OFF -DENABLE_TESTS=OFF \
+            -DDISABLE_ADVANCE_SIMD=ON -DSHADERC_STATIC=ON \
+            -DCMAKE_PREFIX_PATH="$PWD/deps" \
+            "-DSHADERC_LIBRARY=$PWD/deps/lib/libshaderc_combined.a" \
+            -DCMAKE_FIND_ROOT_PATH="$PWD/deps" \
+            . -Bbuild/windows-x86_64
+
+      - name: Build Core
+        run: cmake --build build/windows-x86_64 --target pcee2_libretro --config Release
+
+      - name: Prepare Artifact
+        run: |
+          mkdir artifact
+          cp build/windows-x86_64/bin/pcee2_libretro.dll pcee2-libretro/pcee2_libretro.info artifact/
+          x86_64-w64-mingw32-strip --strip-unneeded artifact/pcee2_libretro.dll
+          x86_64-w64-mingw32-objdump -p artifact/pcee2_libretro.dll | grep "DLL Name"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pcee2_libretro-windows-x64
+          path: artifact/*
